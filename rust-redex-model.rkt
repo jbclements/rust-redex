@@ -4,9 +4,9 @@
 
 
 (define-language Patina
-  (sr (struct s (l ...) ((fq f ty) ...)))
-  (fn (fun g (l ...) ((x : ty) ...) bk))
-  (bk (block l (lets (x : ty) ...) st ...))
+  (sr (struct s (l ...) ((fq f τ) ...)))
+  (fn (fun g (l ...) ((x : τ) ...) bk))
+  (bk (block l (let (x : τ) ...) st ...))
   (st (lv = rv) 
       (call g (l ...) (cm x) ...)
       bk)
@@ -19,10 +19,10 @@
       (& l mq lv)
       ())
   (cm copy move)
-  (ty (struct-ty s (l ...))
-      (~ ty)
-      (& l mq ty)
-      ())
+  (τ (struct-ty s (l ...))
+     (~ τ)
+     (& l mq τ)
+     ())
   (mq mut const imm)
   (fq mut e)
   (x variable-not-otherwise-mentioned)
@@ -32,7 +32,11 @@
   (f variable-not-otherwise-mentioned)
   )
 
-;; definition of REF is *totally buried*.
+;; definition of REF is *totally buried* in the paper.
+;; also, it looks like TYPE is currently implicit
+
+;; paper should specify that 'imm' is default mutability
+;; qualifier. Maybe it does?
 
 #|
 // example from fig. 7
@@ -48,23 +52,36 @@ p = &*u; // ...until here, same as Fig. ??
 u = ~(copy v); // invalidates p
 } }|#
 
+;; check that the example matches the grammar:
 (redex-match
  Patina fn
  (term (fun borrow () () 
             (block a
-                   (lets (v : ())
+                   (let (v : ())
                          (u : (~ ()))
                          (p : (& a imm ())))
                    (v = ())
                    (u = (~ copy v))
-                   (p = (& z1 mut (* u)))
+                   (p = (& z1 imm (* u)))
                    (u = (~ copy v))))))
 
 
-#;(generate-term Patina fn 5)
 
-(define-extended-language Patina+Γ Patina
-  [Γ · (x : ty Γ)])
+
+;; generate a random patina term
+(generate-term Patina fn 5)
+
+;; the subtype relation
+(define-relation
+  Patina
+  subtype ⊆ τ × τ
+  [(subtype τ τ)]
+  )
+
+
+
+#;(define-extended-language Patina+Γ Patina
+  [Γ · (x : τ Γ)])
 
 
 #;(define-judgment-form
