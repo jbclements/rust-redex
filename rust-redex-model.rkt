@@ -4,27 +4,26 @@
 
 
 (define-language Patina
-  (sr (struct s (l ...) ((fq f τ) ...)))
+  (sr (struct s (l ...) ((f τ) ...)))
   (fn (fun g (l ...) ((x : τ) ...) bk))
   (bk (block l (let (x : τ) ...) st ...))
   (st (lv = rv) 
       (call g (l ...) (cm x) ...)
       bk)
   (lv x (o lv f) (* lv))
-  (rv (cm x) 
-      (lv o f)
-      (* lv)
-      (new s (l ...) (f cm x) ...)
-      (~ cm x) 
-      (& l mq lv)
-      ())
+  (rv (cm x)    ;; use of local variable
+      (lv o f)  ;; field projection
+      (* lv)    ;; dereference
+      (new s (l ...) (f cm x) ...) ;; struct constant
+      (~ cm x)  ;; create owned box
+      (& l mq lv) ;; borrow
+      ())       ;; unit constant
   (cm copy move)
-  (τ (struct-ty s (l ...))
-     (~ τ)
-     (& l mq τ)
-     ())
+  (τ (struct-ty s (l ...)) ;; s<'l...>
+     (~ τ)                 ;; ~t
+     (& l mq τ)            ;; &'l mq t
+     ())                   ;; ()
   (mq mut const imm)
-  (fq mut e)
   (x variable-not-otherwise-mentioned)
   (g variable-not-otherwise-mentioned)
   (s variable-not-otherwise-mentioned)
