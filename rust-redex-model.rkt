@@ -70,17 +70,24 @@ u = ~(copy v); // invalidates p
 ;; generate a random patina term
 (generate-term Patina fn 5)
 
+(define-extended-language Patina+Γ Patina
+  [Γ · 
+     (x : τ Γ)
+     (l Γ)])
+
 ;; the subtype relation
 (define-relation
-  Patina
-  subtype ⊆ τ × τ
-  [(subtype τ τ)]
+  Patina+Γ
+  subtype ⊆ τ × τ × Γ
+  [(subtype τ τ Γ)]
   )
 
+(term (subtype () () ·))
+(term (subtype ))
 
 
-#;(define-extended-language Patina+Γ Patina
-  [Γ · (x : τ Γ)])
+
+
 
 
 #;(define-judgment-form
