@@ -23,6 +23,8 @@
      (~ τ)
      (& l mq τ)
      ())
+  (τ+ τ
+      (mq τ))
   (mq mut const imm)
   (fq mut e)
   (x variable-not-otherwise-mentioned)
@@ -37,6 +39,8 @@
 
 ;; paper should specify that 'imm' is default mutability
 ;; qualifier. Maybe it does?
+
+;; bug: subtype for ~ includes mq, unlike defn of ty
 
 #|
 // example from fig. 7
@@ -69,14 +73,37 @@ u = ~(copy v); // invalidates p
 
 
 ;; generate a random patina term
-(generate-term Patina fn 5)
+#;(generate-term Patina fn 5)
 
-;; the subtype relation
+
+;; the subtype relation ; oh dear, it's parameterized
+;; by lifetime inequality, and therefore by the program.
 (define-relation
   Patina
-  subtype ⊆ τ × τ
+  subtype ⊆ τ+ × τ+
+  ;; subsumed by identity rule below:
+  ;;[(subtype () ())]
+  ;; my best guess at what the paper was supposed to say:
+  [(subtype (~ τ+_1) (~ τ+_2))
+   (subtype τ+_1 τ+_2)]
+  ;; looks like maybe the struct rule should allow lifetimes
+  ;; with a <= relationship?
+  
+  
+  ;; I'm abbreviating, here. I think the paper should 
+  ;; just use this:
   [(subtype τ τ)]
   )
+
+;; testing the subtype relation
+(require rackunit)
+(check-true (term (subtype () ())))
+(check-true (term (subtype (~ ()) (~ ()))))
+(check-true
+ (term (subtype (struct-ty a (l1 l2 l3))
+                (struct-ty a (l1 l2 l3)))))
+(check-false (term (subtype (struct-ty a (l1 l2 l3))
+                            (struct-ty b (l1 l2 l3)))))
 
 
 
