@@ -10,20 +10,26 @@
   (bk (block l (let (x : τ) ...) st ...))
   (st (lv = rv) 
       (call g (l ...) (cm x) ...)
+      (if0 rv bk bk)
       bk)
-  (lv x (o lv f) (* lv))
+  (lv x (lv o f) (* lv))
   (rv (cm x)    ;; use of local variable
       (lv o f)  ;; field projection
       (* lv)    ;; dereference
       (new s (l ...) (f cm x) ...) ;; struct constant
       (~ cm x)  ;; create owned box
       (& l mq lv) ;; borrow
-      ())       ;; unit constant
+      ()       ;; unit constant
+      ;; might be the easiest way to get turing-completeness?
+      number  ;; constant number
+      (+ rv rv) ;; sum
+      )
   (cm copy move)
   (τ (struct-ty s l ...) ;; s<'l...>
      (~ τ)                 ;; ~t
      (& l mq τ)            ;; &'l mq t
-     ())                   ;; ()
+     ()                   ;; ()
+     int)
   (mq mut const imm)
   (x variable-not-otherwise-mentioned)
   (g variable-not-otherwise-mentioned)
@@ -32,13 +38,12 @@
   (f variable-not-otherwise-mentioned)
   )
 
+
 ;; definition of REF is *totally buried* in the paper.
 ;; also, it looks like TYPE is currently implicit
 
 ;; paper should specify that 'imm' is default mutability
 ;; qualifier. Maybe it does?
-
-;; bug: subtype for ~ includes mq, unlike defn of ty
 
 #|
 // example from fig. 7
@@ -75,12 +80,91 @@ u = ~(copy v); // invalidates p
 ;; generate a random patina term
 #;(generate-term Patina fn 5)
 
+;;;;
+;;
+;; EVALUATION
+;;
+;;;;
 
+(define-extended-language Patina-machine Patina
+  [H mt (alpha hv H)]
+  [hv alpha ()]
+  ;; typo in paper: V maps to addresses, not to types
+  [V mt (x alpha V)]
+  [T mt (tymap T)]
+  [tymap mt (x ty tymap)]
+  [S mt (ba S)]
+  [ba (l sts)]
+  [sts mt (st sts)]
+  [alpha number])
+
+
+(define-metafunction Patina-machine
+  rv--> : H V T alpha rv -> (H V)
+  [(rv--> H V T alpha ()) 
+   ((alpha () H) V)]
+  ;; ... and all the rest of the rules ...
+  )
+
+(define machine-step
+  (reduction-relation
+   Patina-machine
+   (--> (H V_1 (V_2 T) ((l mt) S))
+        ((free-some H V_2) (remove-vars V_2 V_1) T S)
+        )))
+
+
+;; stub function ... actually, this doesn't quite make sense to me.
+(define-metafunction Patina-machine
+  free-some : H V -> H
+  ;; ... clauses here
+  )
+
+;; stub function
+;; remove the variables mentioned in V_1 from V_2
+(define-metafunction Patina-machine
+  remove-vars : V V -> V
+  ;; ... clauses here
+  )
+
+
+
+
+
+;; multiplication. destroys a, sorry. Can't wait until this runs....
+(term
+ (fun mult () ((a : (& l1 mut int)) 
+               (b : (& l2 const int))
+               (sum : (& l3 mut int)))
+      (block l4 (let) 
+             (if0 (* a)
+                  (block l5 (let))
+                  (block l6 (let)
+                         ((* sum) = (+ (* b) (* sum)))
+                         ((* a) = (+ -1 (* a)))
+                         (call mult (move a) (move b) (move c)))))))
+
+
+(check-true (and (redex-match Patina-machine H 
+                              (term 
+                               (49 22 (34 () mt))))
+                 #t))
+
+
+
+;;;;
+;;
+;; TYPE CHECKING
+;;
+;;;;
 
 (define-extended-language Patina+Γ Patina
   [Γ · 
      (x : τ Γ)
      (l Γ)])
+
+
+
 
 ;; the subtype relation
 (define-relation
