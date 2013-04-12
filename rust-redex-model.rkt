@@ -34,9 +34,9 @@
   ;; copy/move :
   (cm copy move)
   ;; types : 
-  (τ (struct-ty s l ...) ;; s<'l...>
-     (~ τ)                 ;; ~t
-     (& l mq τ)            ;; &'l mq t
+  (ty (struct-ty s l ...) ;; s<'l...>
+     (~ ty)                 ;; ~t
+     (& l mq ty)            ;; &'l mq t
      ()                   ;; ()
      int)
   ;; mq : mutability qualifier
@@ -103,15 +103,15 @@ u = ~(copy v); // invalidates p
 
 (define-extended-language Patina-machine Patina
   ;; H (heap) : maps addresses to heap values
-  [H mt (alpha hv H)]
+  [H ((alpha hv) ...)]
   ;; hv (heap values)
-  [hv alpha ()]
+  [hv (ptr alpha) () (int number)]
   ;; V (vars) : a list of vmaps
   [V (vmap ...)]
   ;; vmap: maps variable names to addresses
   [vmap (((x alpha) ...) ...)]
   ;; T (types) : a list of tymaps
-  [T mt (tymap T)]
+  [T (tymap ...)]
   ;; tymap : a map from names to types
   [tymap mt (((x ty) ...) ...)]
   ;; S (stack) : a list of 'ba's
@@ -126,14 +126,16 @@ u = ~(copy v); // invalidates p
 (define-metafunction Patina-machine
   rv--> : prog H V T alpha rv -> (H V)
   ;; evaluate unit:
-  [(rv--> prog H V T alpha ())
-   ((alpha () H) V)]
+  [(rv--> prog (H ...) V T alpha ())
+   (((alpha ()) H ...) V)]
   ;; ... and all the rest of the rules ...
   )
 
+(redex-match Patina-machine H (term ((14 ()))))
+
 (check-equal?
- (term (rv--> (() ()) mt mt mt 14 ()))
- (term ((14 () mt) mt)))
+ (term (rv--> (() ()) () () () 14 ()))
+ (term (((14 ())) ())))
 
 (define machine-step
   (reduction-relation
@@ -144,22 +146,36 @@ u = ~(copy v); // invalidates p
    (--> (prog H (vmap vmaps ...) 
               (tmap tmaps ...) ((l ((x = rv) st ...)) S))
         ()
+        (where addr (alloc H ty))
         (where ty (type-of prog tmap x))
         (side-condition (not-in (term x) (term vmap)))
         )
    ))
 
 
+(define-metafunction Patina-machine
+  alloc : H ty -> alpha
+  [(alloc H ty)
+   ,(add1 (apply max (cons 0 (map car (term H)))))])
+
+(check-equal? (term (alloc () int)) 1)
+(check-equal? (term (alloc ((4 (ptr 2423)) (17 ())) int)) 18)
+
 
 ;; what's the type of this lval?
 (define-metafunction Patina-machine
-  type-of : prog tmap lv -> ty
+  type-of : prog tymap lv -> ty
   [(type-of prog (((x ty) rest ...) rest2 ...) x)
    ty]
-  [(type-of prog (((x_1 ty_1) (x_2 ty_2) ...) tmap ...) x_3)
-   (type-of prog (((x_2 ty_2) ...) tmap ...) x_3)]
+  [(type-of prog (((x_1 ty_x) (x_2 ty_2) ...) tymap ...) x_3)
+   (type-of prog (((x_2 ty_2) ...) tymap ...) x_3)]
   [(type-of prog (() (x_1 ty) ...) x)
    (type-of prog ((x_1 ty) ...) x)])
+
+(redex-match Patina-machine tymap (term (((y int)(x ())))))
+(check-equal?
+ (term (type-of (() ()) (((y int)(x ()))) x))
+ (term ()))
 
 
 ;; is x not in the vmap?
@@ -226,7 +242,7 @@ u = ~(copy v); // invalidates p
 
 (define-extended-language Patina+Γ Patina
   [Γ · 
-     (x : τ Γ)
+     (x : ty Γ)
      (l Γ)])
 
 
@@ -235,22 +251,22 @@ u = ~(copy v); // invalidates p
 ;; the subtype relation
 (define-relation
   Patina+Γ
-  subtype ⊆ τ × τ × Γ
+  subtype ⊆ ty × ty × Γ
   ;; implied by written rules (by induction on 
   ;; structure of types), subsumes several rules.
-  [(subtype τ τ Γ)]
-  [(subtype (& l_1 mq_1 τ_1) (& l_2 mq_2 τ_2) Γ)
+  [(subtype ty ty Γ)]
+  [(subtype (& l_1 mq_1 ty_1) (& l_2 mq_2 ty_2) Γ)
    ;; contravariant in lifetimes
    (lifetime-<= l_2 l_1 Γ)
    ;; relation extracted from type rules:
    (mq-< mq_1 mq_2)
-   (subtype τ_1 τ_2 Γ)]
+   (subtype ty_1 ty_2 Γ)]
   ;; special-case for mut: NB types are the same
-  [(subtype (& l_1 mut τ) (& l_2 mut τ) Γ)
+  [(subtype (& l_1 mut ty) (& l_2 mut ty) Γ)
    ;; contravariant in lifetimes
    (lifetime-<= l_2 l_1 Γ)]
-  [(subtype (~ τ_1) (~ τ_2) Γ)
-   (subtype τ_1 τ_2 Γ)]
+  [(subtype (~ ty_1) (~ ty_2) Γ)
+   (subtype ty_1 ty_2 Γ)]
   )
 
 ;; an abstraction for the & rule
@@ -269,7 +285,7 @@ u = ~(copy v); // invalidates p
   lifetime-<= ⊆ l × l × Γ
   ;; it might be more consistent to insist that it appears somewhere...
   [(lifetime-<= l_1 l_1 Γ)]
-  [(lifetime-<= l_1 l_2 (x : τ Γ))
+  [(lifetime-<= l_1 l_2 (x : ty Γ))
    (lifetime-<= l_1 l_2 Γ)]
   ;; l_1 < l_2 if l_1 is inside l_2, right?
   [(lifetime-<= l_1 l_2 (l_1 Γ))
@@ -279,7 +295,7 @@ u = ~(copy v); // invalidates p
 (define-relation
   Patina+Γ  
   tenv-contains? ⊆ Γ × l
-  [(tenv-contains? (x : τ Γ) l)
+  [(tenv-contains? (x : ty Γ) l)
    (tenv-contains? Γ l)]
   [(tenv-contains? (l Γ) l)])
 
