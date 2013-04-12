@@ -5,14 +5,21 @@
 
 
 (define-language Patina
+  (prog ((sr ...) (fn ...)))
+  ;; structures:
   (sr (struct s (l ...) ((f τ) ...)))
+  ;; function def'ns
   (fn (fun g (l ...) ((x : τ) ...) bk))
+  ;; blocks:
   (bk (block l (let (x : τ) ...) st ...))
-  (st (lv = rv) 
+  ;; statements:
+  (st (lv = rv)
       (call g (l ...) (cm x) ...)
       (if0 rv bk bk)
       bk)
+  ;; lvalues :
   (lv x (lv o f) (* lv))
+  ;; rvalues :
   (rv (cm x)    ;; use of local variable
       (lv o f)  ;; field projection
       (* lv)    ;; dereference
@@ -24,17 +31,25 @@
       number  ;; constant number
       (+ rv rv) ;; sum
       )
+  ;; copy/move :
   (cm copy move)
+  ;; types : 
   (τ (struct-ty s l ...) ;; s<'l...>
      (~ τ)                 ;; ~t
      (& l mq τ)            ;; &'l mq t
      ()                   ;; ()
      int)
+  ;; mq : mutability qualifier
   (mq mut const imm)
+  ;; variables
   (x variable-not-otherwise-mentioned)
+  ;; function names
   (g variable-not-otherwise-mentioned)
+  ;; structure names
   (s variable-not-otherwise-mentioned)
+  ;; labels
   (l variable-not-otherwise-mentioned)
+  ;; field names
   (f variable-not-otherwise-mentioned)
   )
 
@@ -77,7 +92,7 @@ u = ~(copy v); // invalidates p
 
 
 
-;; generate a random patina term
+;; generate a random patina function
 #;(generate-term Patina fn 5)
 
 ;;;;
@@ -87,34 +102,82 @@ u = ~(copy v); // invalidates p
 ;;;;
 
 (define-extended-language Patina-machine Patina
+  ;; H (heap) : maps addresses to heap values
   [H mt (alpha hv H)]
+  ;; hv (heap values)
   [hv alpha ()]
-  ;; typo in paper: V maps to addresses, not to types
-  [V mt (x alpha V)]
+  ;; V (vars) : a list of vmaps
+  [V (vmap ...)]
+  ;; vmap: maps variable names to addresses
+  [vmap (((x alpha) ...) ...)]
+  ;; T (types) : a list of tymaps
   [T mt (tymap T)]
-  [tymap mt (x ty tymap)]
+  ;; tymap : a map from names to types
+  [tymap mt (((x ty) ...) ...)]
+  ;; S (stack) : a list of 'ba's
   [S mt (ba S)]
+  ;; ba (block activation) : a label and a list of statements
   [ba (l sts)]
   [sts mt (st sts)]
   [alpha number])
 
 
+;; evaluate an rvalue, put the value at address alpha
 (define-metafunction Patina-machine
-  rv--> : H V T alpha rv -> (H V)
-  [(rv--> H V T alpha ()) 
+  rv--> : prog H V T alpha rv -> (H V)
+  ;; evaluate unit:
+  [(rv--> prog H V T alpha ())
    ((alpha () H) V)]
   ;; ... and all the rest of the rules ...
   )
 
+(check-equal?
+ (term (rv--> (() ()) mt mt mt 14 ()))
+ (term ((14 () mt) mt)))
+
 (define machine-step
   (reduction-relation
    Patina-machine
-   (--> (H V_1 (tymap T) ((l mt) S))
+   #;(--> (prog H V_1 (tymap T) ((l mt) S))
         ((free-some H tymap) (remove-vars V_2 V_1) T S)
-        )))
+        )
+   (--> (prog H (vmap vmaps ...) 
+              (tmap tmaps ...) ((l ((x = rv) st ...)) S))
+        ()
+        (where ty (type-of prog tmap x))
+        (side-condition (not-in (term x) (term vmap)))
+        )
+   ))
 
 
-;; stub function ... actually, this doesn't quite make sense to me.
+
+;; what's the type of this lval?
+(define-metafunction Patina-machine
+  type-of : prog tmap lv -> ty
+  [(type-of prog (((x ty) rest ...) rest2 ...) x)
+   ty]
+  [(type-of prog (((x_1 ty_1) (x_2 ty_2) ...) tmap ...) x_3)
+   (type-of prog (((x_2 ty_2) ...) tmap ...) x_3)]
+  [(type-of prog (() (x_1 ty) ...) x)
+   (type-of prog ((x_1 ty) ...) x)])
+
+
+;; is x not in the vmap?
+(define (not-in x vmap)
+  (not (ormap (lambda (dict) (dict-ref dict x #f)) vmap)))
+
+(check-equal?
+ (not-in 'x '(((a 13) (b 14))
+              ((z 3) (x 4))))
+ #f)
+(check-equal?
+ (not-in 'x '(((a 13) (b 14))
+              ((z 3) (o 4))))
+ #t)
+
+;; 
+
+;; stub function
 (define-metafunction Patina-machine
   free-some : H V -> H
   ;; ... clauses here
@@ -128,6 +191,9 @@ u = ~(copy v); // invalidates p
   )
 
 
+;; load a program as a configuration
+;; 
+#;(define (load prog))
 
 
 
