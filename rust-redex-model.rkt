@@ -109,8 +109,8 @@ u = ~(copy v); // invalidates p
 (define machine-step
   (reduction-relation
    Patina-machine
-   (--> (H V_1 (V_2 T) ((l mt) S))
-        ((free-some H V_2) (remove-vars V_2 V_1) T S)
+   (--> (H V_1 (tymap T) ((l mt) S))
+        ((free-some H tymap) (remove-vars V_2 V_1) T S)
         )))
 
 
