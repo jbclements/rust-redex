@@ -7,11 +7,11 @@
 (define-language Patina
   (prog ((sr ...) (fn ...)))
   ;; structures:
-  (sr (struct s (l ...) ((f τ) ...)))
+  (sr (struct s (l ...) ((f ty) ...)))
   ;; function def'ns
-  (fn (fun g (l ...) ((x : τ) ...) bk))
+  (fn (fun g (l ...) ((x : ty) ...) bk))
   ;; blocks:
-  (bk (block l (let (x : τ) ...) st ...))
+  (bk (block l (let (x : ty) ...) st ...))
   ;; statements:
   (st (lv = rv)
       (call g (l ...) (cm x) ...)
@@ -26,7 +26,7 @@
       (new s (l ...) (f cm x) ...) ;; struct constant
       (~ cm x)  ;; create owned box
       (& l mq lv) ;; borrow
-      ()       ;; unit constant
+      unit       ;; unit constant
       ;; might be the easiest way to get turing-completeness?
       number  ;; constant number
       (+ rv rv) ;; sum
@@ -37,7 +37,7 @@
   (ty (struct-ty s l ...) ;; s<'l...>
      (~ ty)                 ;; ~t
      (& l mq ty)            ;; &'l mq t
-     ()                   ;; ()
+     unit                   ;; unit
      int)
   ;; mq : mutability qualifier
   (mq mut const imm)
@@ -81,10 +81,10 @@ u = ~(copy v); // invalidates p
     Patina fn
     (term (fun borrow () () 
                (block a
-                      (let (v : ())
-                        (u : (~ ()))
-                        (p : (& a imm ())))
-                      (v = ())
+                      (let (v : unit)
+                        (u : (~ unit))
+                        (p : (& a imm unit)))
+                      (v = unit)
                       (u = (~ copy v))
                       (p = (& z1 imm (* u)))
                       (u = (~ copy v))))))))
@@ -107,15 +107,16 @@ u = ~(copy v); // invalidates p
   ;; H (heap) : maps addresses to heap values
   [H ((alpha hv) ...)]
   ;; hv (heap values)
-  [hv (ptr alpha) () (int number)]
+  [hv (ptr alpha) unit (int number)]
   ;; S (stack) : a stack of stack-frames
   [S done (sf S)]
   ;; sf (stack frame)
-  [sf (vmap tmap bas)]
+  [sf (vmap tmaps bas)]
   ;; vmap: maps variable names to addresses
   [vmap (((x alpha) ...) ...)]
-  ;; tmap : a map from names to types
-  [tmap (((x ty) ...) ...)]
+  ;; tmaps : a map from names to types
+  [tmaps (tmap ...)]
+  [tmap ((x ty) ...)]
   ;; S (stack) : a list of block frames
   [bas mt (ba bas)]
   ;; ba (block activation) : a label and a list of statements
@@ -126,35 +127,43 @@ u = ~(copy v); // invalidates p
 
 ;; evaluate an rvalue, put the value at address alpha
 (define-metafunction Patina-machine
-  rv--> : prog H vmap tmap alpha rv -> (H vmap)
+  rv--> : prog H vmap tmaps alpha rv -> (H vmap)
   ;; evaluate unit:
-  [(rv--> prog ((alpha_1 hv_1) ...) vmap tmap alpha ())
-   (((alpha ()) (alpha_1 hv_1) ...) vmap)]
+  [(rv--> prog ((alpha_1 hv_1) ...) vmap tmaps alpha unit)
+   (((alpha unit) (alpha_1 hv_1) ...) vmap)]
+  ;; evaluate int:
+  [(rv--> prog ((alpha_1 hv_1) ...) vmap tmaps alpha number)
+   (((alpha (int number)) (alpha_1 hv_1) ...) vmap)]
   ;; ... and all the rest of the rules ...
   )
 
 (check-equal?
- (term (rv--> (() ()) () () () 14 ()))
- (term (((14 ())) ())))
+ (term (rv--> (() ()) () () () 14 unit))
+ (term (((14 unit)) ())))
 (check-equal?
- (term (rv--> (() ()) ((9 (ptr 22))) () () 14 ()))
- (term (((14 ()) (9 (ptr 22))) ())))
+ (term (rv--> (() ()) ((9 (ptr 22))) () () 14 unit))
+ (term (((14 unit) (9 (ptr 22))) ())))
+(check-equal?
+ (term (rv--> (() ()) ((9 (ptr 22))) () () 14 223))
+ (term (((14 (int 223)) (9 (ptr 22))) ())))
 
 (define machine-step
   (reduction-relation
    Patina-machine
-   #;(--> (prog H V_1 (tmap T) ((l mt) S))
-        ((free-some H tmap) (remove-vars V_2 V_1) T S)
+   #;(--> (prog H V_1 (tmaps T) ((l mt) S))
+        ((free-some H tmaps) (remove-vars V_2 V_1) T S)
         )
-   (--> (prog H ((vmap tmap ((l ((x = rv) sts)) bas)) S))
-        (prog H_1 ((vmap_2 tmap ((l sts) bas)) S))
+   ;; initialization of variable
+   (--> (prog H ((vmap tmaps ((l ((x = rv) sts)) bas)) S))
+        (prog H_1 ((vmap_2 tmaps ((l sts) bas)) S))
         ;; order matters, here:
-        (side-condition (not-in (term x) (term vmap)))
+        (side-condition (not (in-vmap (term x) (term vmap))))
         ;; actually unnecessary, if alloc doesn't take ty... :
-        (where ty (type-of prog tmap x))
+        ;;; what's going on here?
+        (where ty (type-of prog tmaps x))
         (where alpha (alloc H ty))
         (where (H_1 vmap_1)
-               (rv--> prog H vmap tmap alpha rv))
+               (rv--> prog H vmap tmaps alpha rv))
         (where vmap_2 (add-to-vmap x alpha vmap_1)))
    ;; fall-through...?
    (--> (prog H mt)
@@ -183,13 +192,13 @@ u = ~(copy v); // invalidates p
 ;; theorems here.
 
 (check-equal? (term (alloc () int)) 1)
-(check-equal? (term (alloc ((4 (ptr 2423)) (17 ())) int)) 18)
+(check-equal? (term (alloc ((4 (ptr 2423)) (17 unit)) int)) 18)
 
 
 ;; what's the type of this lval?
 (define-metafunction Patina-machine
-  type-of : prog tmap lv -> ty
-  [(type-of prog (((x ty) rest ...) rest2 ...) x)
+  type-of : prog tmaps lv -> ty
+  [(type-of prog (((x ty) (x_dc ty_dc) ...) tmap ...) x)
    ty]
   [(type-of prog (((x_1 ty_x) (x_2 ty_2) ...) tmap ...) x_3)
    (type-of prog (((x_2 ty_2) ...) tmap ...) x_3)]
@@ -197,35 +206,58 @@ u = ~(copy v); // invalidates p
    (type-of prog ((x_1 ty) ...) x)])
 
 (check-equal?
- (term (type-of (() ()) (((y int)(x ()))) x))
- (term ()))
-
-
-;; is x not in the vmap?
-(define (not-in x vmap)
-  (not (ormap (lambda (dict) (dict-ref dict x #f)) vmap)))
+ (term (type-of (() ()) (((y int)(x unit))) x))
+ (term unit))
 
 (check-equal?
- (not-in 'x '(((a 13) (b 14))
+ (term (type-of (() ()) (((f unit) (g int))) f))
+ (term unit))
+
+;; is x in the vmap?
+(define (in-vmap x vmap)
+  (and (ormap (lambda (dict) (dict-ref dict x #f)) vmap)
+       #t))
+
+(check-equal?
+ (in-vmap 'x '(((a 13) (b 14))
               ((z 3) (x 4))))
- #f)
-(check-equal?
- (not-in 'x '(((a 13) (b 14))
-              ((z 3) (o 4))))
  #t)
-
+(check-equal?
+ (in-vmap 'x '(((a 13) (b 14))
+              ((z 3) (o 4))))
+ #f)
 
 ;; we can take a single step!
 (let ()
   (define prog (term (() ())))
-  (define tmap (term (((f ())))))
+  (define tmaps (term (((f unit) (g int)))))
   (test--> machine-step
            (term (,prog () ; heap
-                        (((()) ,tmap ((l1 ((f = ()) mt)) mt)) done)))
-           (term (,prog ((1 ())); heap
+                        (((()) ,tmaps ((l1 ((f = unit) mt)) mt)) done)))
+           (term (,prog ((1 unit)); heap
                         (((((f 1))) 
-                          ,tmap 
-                          ((l1 mt) mt)) done)))))
+                          ,tmaps 
+                          ((l1 mt) mt)) done))))
+  ;; we can violate the type system, too...
+  (test--> machine-step
+           (term (,prog () ; heap
+                        (((()) ,tmaps ((l1 ((f = 99) mt)) mt)) done)))
+           (term (,prog ((1 (int 99))); heap
+                        (((((f 1))) 
+                          ,tmaps 
+                          ((l1 mt) mt)) done))))
+  ;; two steps
+  (test-->> machine-step
+           (term (,prog () ; heap
+                        (((()) ,tmaps ((l1 ((f = unit)
+                                           ((g = 14)
+                                            mt))) mt)) done)))
+           (term (,prog ((2 (int 14)) (1 unit)); heap
+                        (((((g 2) (f 1))) 
+                          ,tmaps 
+                          ((l1 mt) mt)) done))))
+  ;; mutating an existing value
+  )
 
 ;; 
 
@@ -333,11 +365,11 @@ u = ~(copy v); // invalidates p
 #;(generate-term #:source bogo 5)
 
 (check-false (term (tenv-contains? · la)))
-(check-false (term (tenv-contains? (x : () (lb ·)) la)))
-(check-true (term (tenv-contains? (x : () (lb ·)) lb)))
+(check-false (term (tenv-contains? (x : unit (lb ·)) la)))
+(check-true (term (tenv-contains? (x : unit (lb ·)) lb)))
 
-(check-false (term (lifetime-<= la lb (x : () (y : () ·)))))
-(check-true (term (lifetime-<= la lb (x : () (la (y : () (lb ·)))))))
+(check-false (term (lifetime-<= la lb (x : unit (y : unit ·)))))
+(check-true (term (lifetime-<= la lb (x : unit (la (y : unit (lb ·)))))))
 ;; is this as desired?
 (check-true (term (lifetime-<= la la ·)))
 
@@ -346,30 +378,30 @@ u = ~(copy v); // invalidates p
 (check-false (term (mq-< const imm)))
 
 
-(check-true (term (subtype () () ·)))
-(check-true (term (subtype (& l1 imm   (& l3 const ()))
-                           (& l1 const (& l4 const ()))
+(check-true (term (subtype unit unit ·)))
+(check-true (term (subtype (& l1 imm   (& l3 const unit))
+                           (& l1 const (& l4 const unit))
                            (l4 (l3 ·)))))
-(check-true (term (subtype (& l1 imm   (& l3 mut ()))
-                           (& l1 const (& l4 mut ()))
+(check-true (term (subtype (& l1 imm   (& l3 mut unit))
+                           (& l1 const (& l4 mut unit))
                            (l4 (l3 ·)))))
-(check-false (term (subtype (& l1 imm   (& l3 mut ()))
-                           (& l1 const ())
+(check-false (term (subtype (& l1 imm   (& l3 mut unit))
+                           (& l1 const unit)
                            (l4 (l3 ·)))))
-(check-false (term (subtype (& l1 imm   (& l4 mut ()))
-                            (& l1 const (& l3 mut ()))
+(check-false (term (subtype (& l1 imm   (& l4 mut unit))
+                            (& l1 const (& l3 mut unit))
                             (l4 (l3 ·)))))
-(check-false (term (subtype (& l1 mut (& l3 const ()))
-                           (& l1 mut (& l4 const ()))
+(check-false (term (subtype (& l1 mut (& l3 const unit))
+                           (& l1 mut (& l4 const unit))
                            (l4 (l3 ·)))))
 
 (check-true
- (term (subtype (~ (& l1 imm (& l3 const ()))) 
-                (~ (& l1 imm (& l4 const ())))
+ (term (subtype (~ (& l1 imm (& l3 const unit))) 
+                (~ (& l1 imm (& l4 const unit)))
                 (l4 (l3 ·)))))
 (check-false
- (term (subtype (~ (& l1 imm (& l4 const ()))) 
-                (~ (& l1 imm (& l3 const ())))
+ (term (subtype (~ (& l1 imm (& l4 const unit))) 
+                (~ (& l1 imm (& l3 const unit)))
                 (l4 (l3 ·)))))
 
 (check-true 
