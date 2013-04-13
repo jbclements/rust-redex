@@ -215,7 +215,7 @@ u = ~(copy v); // invalidates p
  #t)
 
 
-
+;; we can take a single step!
 (let ()
   (define prog (term (() ())))
   (define tmap (term (((f ())))))
