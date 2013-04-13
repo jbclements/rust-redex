@@ -102,18 +102,20 @@ u = ~(copy v); // invalidates p
 ;;;;
 
 (define-extended-language Patina-machine Patina
+  ;; a configuration of the machine
+  [configuration (prog H S)]
   ;; H (heap) : maps addresses to heap values
   [H ((alpha hv) ...)]
   ;; hv (heap values)
   [hv (ptr alpha) () (int number)]
   ;; S (stack) : a stack of stack-frames
-  [S mt (sf S)]
+  [S done (sf S)]
   ;; sf (stack frame)
   [sf (vmap tmap bas)]
   ;; vmap: maps variable names to addresses
   [vmap (((x alpha) ...) ...)]
-  ;; tymap : a map from names to types
-  [tymap mt (((x ty) ...) ...)]
+  ;; tmap : a map from names to types
+  [tmap (((x ty) ...) ...)]
   ;; S (stack) : a list of block frames
   [bas mt (ba bas)]
   ;; ba (block activation) : a label and a list of statements
@@ -124,14 +126,12 @@ u = ~(copy v); // invalidates p
 
 ;; evaluate an rvalue, put the value at address alpha
 (define-metafunction Patina-machine
-  rv--> : prog H vmap tymap alpha rv -> (H vmap)
+  rv--> : prog H vmap tmap alpha rv -> (H vmap)
   ;; evaluate unit:
-  [(rv--> prog ((alpha_1 hv_1) ...) vmap tymap alpha ())
+  [(rv--> prog ((alpha_1 hv_1) ...) vmap tmap alpha ())
    (((alpha ()) (alpha_1 hv_1) ...) vmap)]
   ;; ... and all the rest of the rules ...
   )
-
-(redex-match Patina-machine H (term ((14 ()))))
 
 (check-equal?
  (term (rv--> (() ()) () () () 14 ()))
@@ -143,25 +143,35 @@ u = ~(copy v); // invalidates p
 (define machine-step
   (reduction-relation
    Patina-machine
-   #;(--> (prog H V_1 (tymap T) ((l mt) S))
-        ((free-some H tymap) (remove-vars V_2 V_1) T S)
+   #;(--> (prog H V_1 (tmap T) ((l mt) S))
+        ((free-some H tmap) (remove-vars V_2 V_1) T S)
         )
-   (--> (prog H ((vmap tymap ((l ((x = rv) sts)) bas)) S))
-        (prog H_1 ((vmap_2 tymap ((l sts) bas)) S))
+   (--> (prog H ((vmap tmap ((l ((x = rv) sts)) bas)) S))
+        (prog H_1 ((vmap_2 tmap ((l sts) bas)) S))
         ;; order matters, here:
         (side-condition (not-in (term x) (term vmap)))
         ;; actually unnecessary, if alloc doesn't take ty... :
-        (where ty (type-of prog tymap x))
+        (where ty (type-of prog tmap x))
         (where alpha (alloc H ty))
         (where (H_1 vmap_1)
-               (rv--> prog H vmap tymap alpha rv))
+               (rv--> prog H vmap tmap alpha rv))
         (where vmap_2 (add-to-vmap x alpha vmap_1)))
    ;; fall-through...?
-   (--> (prog H () T S)
-        ,(error (~a "no stack frames in V"))
+   (--> (prog H mt)
+        ,(error (~a "finished evaluation"))
         )
    ))
 
+
+(define-metafunction Patina-machine
+  add-to-vmap : x alpha vmap -> vmap
+  [(add-to-vmap x alpha 
+                (((x_1 alpha_1) ...) ((x_2 alpha_2) ...) ...))
+   (((x alpha) (x_1 alpha_1) ...) ((x_2 alpha_2) ...) ...)])
+
+(check-equal? 
+ (term (add-to-vmap frog 278 (((a 9)) () ((x 3) (y 4)))))
+ (term (((frog 278) (a 9)) () ((x 3) (y 4)))))
 ;; the alloc metafunction returns the next unused slot.
 (define-metafunction Patina-machine
   alloc : H ty -> alpha
@@ -178,11 +188,11 @@ u = ~(copy v); // invalidates p
 
 ;; what's the type of this lval?
 (define-metafunction Patina-machine
-  type-of : prog tymap lv -> ty
+  type-of : prog tmap lv -> ty
   [(type-of prog (((x ty) rest ...) rest2 ...) x)
    ty]
-  [(type-of prog (((x_1 ty_x) (x_2 ty_2) ...) tymap ...) x_3)
-   (type-of prog (((x_2 ty_2) ...) tymap ...) x_3)]
+  [(type-of prog (((x_1 ty_x) (x_2 ty_2) ...) tmap ...) x_3)
+   (type-of prog (((x_2 ty_2) ...) tmap ...) x_3)]
   [(type-of prog (() (x_1 ty) ...) x)
    (type-of prog ((x_1 ty) ...) x)])
 
@@ -208,18 +218,14 @@ u = ~(copy v); // invalidates p
 
 (let ()
   (define prog (term (() ())))
-  (define tymap (term (((f ())))))
-  (display (term (rv--> ,prog () () ,tymap 1 ())))
+  (define tmap (term (((f ())))))
   (test--> machine-step
-           (term (,prog ()
-                        ((vmap tymap ((l1 ()) mt)) mt)
-                        (())
-                        ((((f ()))))
-                        ((l1 ((f = ()) mt)) mt)))
-           (term (,prog ((1 (val ())))
-                        ((((f 1))))
-                        ((((f ())))) 
-                        ((l1 ()) mt)))))
+           (term (,prog () ; heap
+                        (((()) ,tmap ((l1 ((f = ()) mt)) mt)) done)))
+           (term (,prog ((1 ())); heap
+                        (((((f 1))) 
+                          ,tmap 
+                          ((l1 mt) mt)) done)))))
 
 ;; 
 
