@@ -106,16 +106,16 @@ u = ~(copy v); // invalidates p
   [H ((alpha hv) ...)]
   ;; hv (heap values)
   [hv (ptr alpha) () (int number)]
-  ;; V (vars) : a list of vmaps
-  [V (vmap ...)]
+  ;; S (stack) : a stack of stack-frames
+  [S mt (sf S)]
+  ;; sf (stack frame)
+  [sf (vmap tmap bas)]
   ;; vmap: maps variable names to addresses
   [vmap (((x alpha) ...) ...)]
-  ;; T (types) : a list of tymaps
-  [T (tymap ...)]
   ;; tymap : a map from names to types
   [tymap mt (((x ty) ...) ...)]
-  ;; S (stack) : a list of 'ba's
-  [S mt (ba S)]
+  ;; S (stack) : a list of block frames
+  [bas mt (ba bas)]
   ;; ba (block activation) : a label and a list of statements
   [ba (l sts)]
   [sts mt (st sts)]
@@ -124,10 +124,10 @@ u = ~(copy v); // invalidates p
 
 ;; evaluate an rvalue, put the value at address alpha
 (define-metafunction Patina-machine
-  rv--> : prog H V T alpha rv -> (H V)
+  rv--> : prog H vmap tymap alpha rv -> (H vmap)
   ;; evaluate unit:
-  [(rv--> prog (H ...) V T alpha ())
-   (((alpha ()) H ...) V)]
+  [(rv--> prog ((alpha_1 hv_1) ...) vmap tymap alpha ())
+   (((alpha ()) (alpha_1 hv_1) ...) vmap)]
   ;; ... and all the rest of the rules ...
   )
 
@@ -136,6 +136,9 @@ u = ~(copy v); // invalidates p
 (check-equal?
  (term (rv--> (() ()) () () () 14 ()))
  (term (((14 ())) ())))
+(check-equal?
+ (term (rv--> (() ()) ((9 (ptr 22))) () () 14 ()))
+ (term (((14 ()) (9 (ptr 22))) ())))
 
 (define machine-step
   (reduction-relation
@@ -143,20 +146,31 @@ u = ~(copy v); // invalidates p
    #;(--> (prog H V_1 (tymap T) ((l mt) S))
         ((free-some H tymap) (remove-vars V_2 V_1) T S)
         )
-   (--> (prog H (vmap vmaps ...) 
-              (tmap tmaps ...) ((l ((x = rv) st ...)) S))
-        ()
-        (where addr (alloc H ty))
-        (where ty (type-of prog tmap x))
+   (--> (prog H ((vmap tymap ((l ((x = rv) sts)) bas)) S))
+        (prog H_1 ((vmap_2 tymap ((l sts) bas)) S))
+        ;; order matters, here:
         (side-condition (not-in (term x) (term vmap)))
+        ;; actually unnecessary, if alloc doesn't take ty... :
+        (where ty (type-of prog tymap x))
+        (where alpha (alloc H ty))
+        (where (H_1 vmap_1)
+               (rv--> prog H vmap tymap alpha rv))
+        (where vmap_2 (add-to-vmap x alpha vmap_1)))
+   ;; fall-through...?
+   (--> (prog H () T S)
+        ,(error (~a "no stack frames in V"))
         )
    ))
 
-
+;; the alloc metafunction returns the next unused slot.
 (define-metafunction Patina-machine
   alloc : H ty -> alpha
   [(alloc H ty)
    ,(add1 (apply max (cons 0 (map car (term H)))))])
+
+;; we'd like to prove a theorem that memory allocations 
+;; can't overlap... actually, there are a whole bunch of 
+;; theorems here.
 
 (check-equal? (term (alloc () int)) 1)
 (check-equal? (term (alloc ((4 (ptr 2423)) (17 ())) int)) 18)
@@ -172,7 +186,6 @@ u = ~(copy v); // invalidates p
   [(type-of prog (() (x_1 ty) ...) x)
    (type-of prog ((x_1 ty) ...) x)])
 
-(redex-match Patina-machine tymap (term (((y int)(x ())))))
 (check-equal?
  (term (type-of (() ()) (((y int)(x ()))) x))
  (term ()))
@@ -190,6 +203,23 @@ u = ~(copy v); // invalidates p
  (not-in 'x '(((a 13) (b 14))
               ((z 3) (o 4))))
  #t)
+
+
+
+(let ()
+  (define prog (term (() ())))
+  (define tymap (term (((f ())))))
+  (display (term (rv--> ,prog () () ,tymap 1 ())))
+  (test--> machine-step
+           (term (,prog ()
+                        ((vmap tymap ((l1 ()) mt)) mt)
+                        (())
+                        ((((f ()))))
+                        ((l1 ((f = ()) mt)) mt)))
+           (term (,prog ((1 (val ())))
+                        ((((f 1))))
+                        ((((f ())))) 
+                        ((l1 ()) mt)))))
 
 ;; 
 
@@ -225,13 +255,6 @@ u = ~(copy v); // invalidates p
                          ((* sum) = (+ (* b) (* sum)))
                          ((* a) = (+ -1 (* a)))
                          (call mult (move a) (move b) (move c)))))))
-
-
-(check-true (and (redex-match Patina-machine H 
-                              (term 
-                               (49 22 (34 () mt))))
-                 #t))
-
 
 
 ;;;;
