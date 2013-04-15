@@ -7,7 +7,7 @@
 (define-language Patina
   (prog ((sr ...) (fn ...)))
   ;; structures:
-  (sr (struct s (l ...) ((f ty) ...)))
+  (sr (struct s (l ...) (ty ...)))
   ;; function def'ns
   (fn (fun g (l ...) ((x : ty) ...) bk))
   ;; blocks:
@@ -15,9 +15,10 @@
   ;; statements:
   (st (lv = rv)
       (call g (l ...) (cm x) ...)
-      (if0 rv bk bk)
+      (if0 x bk bk)
       bk)
   ;; lvalues :
+  ;; changing "field names" to be numbers
   (lv x (lv o f) (* lv))
   ;; rvalues :
   (rv (cm x)    ;; use of local variable
@@ -25,7 +26,7 @@
       (* lv)    ;; dereference
       (new s (l ...) (f cm x) ...) ;; struct constant
       (~ cm x)  ;; create owned box
-      (& l mq lv) ;; borrow
+      (& l lv)  ;; borrow
       unit       ;; unit constant
       ;; might be the easiest way to get turing-completeness?
       number  ;; constant number
@@ -50,15 +51,9 @@
   ;; labels
   (l variable-not-otherwise-mentioned)
   ;; field names
-  (f variable-not-otherwise-mentioned)
+  (f number)
   )
 
-
-;; definition of REF is *totally buried* in the paper.
-;; also, it looks like TYPE is currently implicit
-
-;; paper should specify that 'imm' is default mutability
-;; qualifier. Maybe it does?
 
 #|
 // example from fig. 7
@@ -111,9 +106,9 @@ u = ~(copy v); // invalidates p
   ;; S (stack) : a stack of stack-frames
   [S done (sf S)]
   ;; sf (stack frame)
-  [sf (vmap tmaps bas)]
-  ;; vmap: maps variable names to addresses
-  [vmap (((x alpha) ...) ...)]
+  [sf (vmaps tmaps bas)]
+  ;; vmaps: maps variable names to addresses
+  [vmaps (((x alpha) ...) ...)]
   ;; tmaps : a map from names to types
   [tmaps (tmap ...)]
   [tmap ((x ty) ...)]
@@ -127,13 +122,13 @@ u = ~(copy v); // invalidates p
 
 ;; evaluate an rvalue, put the value at address alpha
 (define-metafunction Patina-machine
-  rv--> : prog H vmap tmaps alpha rv -> (H vmap)
+  rv--> : prog H vmaps tmaps alpha rv -> (H vmaps)
   ;; evaluate unit:
-  [(rv--> prog ((alpha_1 hv_1) ...) vmap tmaps alpha unit)
-   (((alpha unit) (alpha_1 hv_1) ...) vmap)]
+  [(rv--> prog ((alpha_1 hv_1) ...) vmaps tmaps alpha unit)
+   (((alpha unit) (alpha_1 hv_1) ...) vmaps)]
   ;; evaluate int:
-  [(rv--> prog ((alpha_1 hv_1) ...) vmap tmaps alpha number)
-   (((alpha (int number)) (alpha_1 hv_1) ...) vmap)]
+  [(rv--> prog ((alpha_1 hv_1) ...) vmaps tmaps alpha number)
+   (((alpha (int number)) (alpha_1 hv_1) ...) vmaps)]
   ;; ... and all the rest of the rules ...
   )
 
@@ -154,32 +149,127 @@ u = ~(copy v); // invalidates p
         ((free-some H tmaps) (remove-vars V_2 V_1) T S)
         )
    ;; initialization of variable
-   (--> (prog H ((vmap tmaps ((l ((x = rv) sts)) bas)) S))
-        (prog H_1 ((vmap_2 tmaps ((l sts) bas)) S))
+   (--> (prog H ((vmaps tmaps ((l ((x = rv) sts)) bas)) S))
+        (prog H_1 ((vmaps_2 tmaps ((l sts) bas)) S))
         ;; order matters, here:
-        (side-condition (not (in-vmap (term x) (term vmap))))
+        (side-condition (not (in-vmaps (term x) (term vmaps))))
         ;; actually unnecessary, if alloc doesn't take ty... :
-        ;;; what's going on here?
         (where ty (type-of prog tmaps x))
         (where alpha (alloc H ty))
-        (where (H_1 vmap_1)
-               (rv--> prog H vmap tmaps alpha rv))
-        (where vmap_2 (add-to-vmap x alpha vmap_1)))
-   ;; fall-through...?
-   (--> (prog H mt)
-        ,(error (~a "finished evaluation"))
-        )
-   ))
+        (where (H_1 vmaps_1)
+               (rv--> prog H vmaps tmaps alpha rv))
+        (where vmaps_2 (add-to-vmaps x alpha vmaps_1)))
+   ;; mutation of variable
+   (--> (prog H ((vmaps tmaps ((l ((lv = rv) sts)) bas)) S))
+        matched #;(prog H_3 ((vmaps_1 tmaps ((l sts) bas)) S))
+        ;; I think I need to ensure that the variable hidden
+        ;; in the lv has already been initialized:
+        (where x (lv-var lv))
+        (side-condition (in-vmaps (term x) (term vmaps)))
+        ;; actually unnecessary, if alloc doesn't take ty... :
+        (where ty (type-of prog tmaps lv))
+        (where alpha (alloc H ty))
+        (where (H_1 vmaps_1)
+               (rv--> prog H vmaps tmaps alpha rv))
+        ;; can the evaluation of rv alter the address of lv?
+        #;(where beta (addr-of H_1 vmaps_1 lv))
+        #;(where H_2 (free-cell H_1 beta ty))
+        #;(where H_3 (move H_2 beta ty alpha))
+        
+        
+        )))
 
+;; what address is this lv referring to?
+(define-metafunction Patina-machine
+  addr-of : H vmaps lv -> alpha
+  [(addr-of H vmaps x) (var-addr vmaps x)]
+  [(addr-of H vmaps (* lv))
+   alpha
+   (where (ptr alpha) (heap-ref (addr-of H vmaps lv)))]
+  [(addr-of H vmaps (lv o f))
+   (ptr-offset (addr-of H vmaps lv) f)])
+
+;; what's the address of this variable?
+(define-metafunction Patina-machine
+  var-addr : vmaps x -> alpha)
+
+;; oh... there's no way to do self-referential data...
+(define test-structs
+  ;; a triple consists of two integers and a unit
+  (term
+   ((struct leaf-1 () (int int unit))
+    (struct leaf-2 (l1) 
+      ((& l1 int) 
+       (~ (struct-ty leaf-1))))
+    (struct parent (l2 l3)
+      ((struct-ty leaf-1)
+       (~ (& l2 (struct-ty leaf-2 l3)))
+       (& l3 int))))))
+
+;; returns the size of a type's representation
+(define-metafunction Patina-machine
+  size-of : (sr ...) ty -> number
+  [(size-of (sr ...) unit) 1]
+  [(size-of (sr ...) int) 1]
+  [(size-of (sr ...) (~ ty)) 1]
+  [(size-of (sr ...) (& l ty)) 1]
+  [(size-of (sr ...) (struct-ty s l ...))
+   ,(struct-size (term (sr ...)) (term s))])
+
+
+(define (struct-size struct-defs name)
+  (match (filter (lambda (struct-def) 
+                   (eq? (second struct-def) name))
+                 struct-defs)
+    [empty (error 'struct-size
+                  "no struct with name ~e" name)]
+    [`((struct ,_1 ,_2 ,tys))
+     (apply + (map ))])
+  (match (dict-ref struct-defs name)
+    [(list 'struct ,name)]))
+(check-equal? (term (size-of ,test-structs (struct-ty leaf-1 ))) 3)
+(check-equal? (term (size-of ,test-structs (struct-ty leaf-2 l))) 2)
+(check-equal? (term (size-of ,test-structs (struct-ty parent m n)))
+              5)
+
+(define test-heap 
+  (term
+   ((1 (int 34)) ;; local var x : int
+    (2 (int 16)) ;; local var y : int
+    (3 (int 9)) ;; local var z : parent
+    (4 (int 9))
+    (5 unit)
+    (6 (ptr 10))
+    (7 (ptr 1)) ;; (ptr to x)
+    (10 (ptr 20))
+    (20 (ptr 25)) ;; a leaf-2
+    (21 (ptr 30))
+    (25 (int 17))
+    (30 (int 18)) ;; a leaf-1
+    (31 (int 19))
+    (32 unit)
+    )))
+
+;; what var is the base of this lv?
+(define-metafunction Patina-machine
+  lv-var : lv -> x
+  [(lv-var x) x]
+  [(lv-var (lv o f)) (lv-var lv)]
+  [(lv-var (* lv)) (lv-var lv)])
+
+(check-equal?
+ (term (lv-var zz)) (term zz))
+(check-equal?
+ (term (lv-var (* ((zz o f1) o f2)))) (term zz))
 
 (define-metafunction Patina-machine
-  add-to-vmap : x alpha vmap -> vmap
-  [(add-to-vmap x alpha 
+  add-to-vmaps : x alpha vmaps -> vmaps
+  [(add-to-vmaps x alpha 
                 (((x_1 alpha_1) ...) ((x_2 alpha_2) ...) ...))
    (((x alpha) (x_1 alpha_1) ...) ((x_2 alpha_2) ...) ...)])
 
 (check-equal? 
- (term (add-to-vmap frog 278 (((a 9)) () ((x 3) (y 4)))))
+ (term (add-to-vmaps frog 278 (((a 9)) () ((x 3) (y 4)))))
  (term (((frog 278) (a 9)) () ((x 3) (y 4)))))
 ;; the alloc metafunction returns the next unused slot.
 (define-metafunction Patina-machine
@@ -213,17 +303,17 @@ u = ~(copy v); // invalidates p
  (term (type-of (() ()) (((f unit) (g int))) f))
  (term unit))
 
-;; is x in the vmap?
-(define (in-vmap x vmap)
-  (and (ormap (lambda (dict) (dict-ref dict x #f)) vmap)
+;; is x in the vmaps?
+(define (in-vmaps x vmaps)
+  (and (ormap (lambda (dict) (dict-ref dict x #f)) vmaps)
        #t))
 
 (check-equal?
- (in-vmap 'x '(((a 13) (b 14))
+ (in-vmaps 'x '(((a 13) (b 14))
               ((z 3) (x 4))))
  #t)
 (check-equal?
- (in-vmap 'x '(((a 13) (b 14))
+ (in-vmaps 'x '(((a 13) (b 14))
               ((z 3) (o 4))))
  #f)
 
@@ -257,6 +347,15 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; mutating an existing value
+  (test--> machine-step
+           (term (,prog ((1 (int 9))) ; heap
+                        (((((g 1))) ,tmaps 
+                                    ((l1 ((g = 99) mt)) mt)) done)))
+           (term (,prog ((1 (int 99))); heap
+                        (((((g 1))) 
+                          ,tmaps 
+                          ((l1 mt) mt)) done))))
+  
   )
 
 ;; 
