@@ -118,7 +118,7 @@ u = ~(copy v); // invalidates p
   ;; ba (block activation) : a label and a list of statements
   [ba (l sts)]
   [sts mt (st sts)]
-  [alpha number])
+  [(alpha beta) number])
 
 
 ;; evaluate an rvalue, put the value at address alpha
@@ -172,9 +172,25 @@ u = ~(copy v); // invalidates p
         (where alpha (alloc H ty))
         (where (H_1 vmaps_1)
                (rv--> prog H vmaps tmaps alpha rv))
+        (side-condition (begin (display `(H_1: ,(term H_1)))
+                               (newline)
+                               #t))
+        (side-condition (begin (display `(vmaps_1: ,(term vmaps_1)))
+                               (newline)
+                               #t))
+        (side-condition (begin (display `(lv: ,(term lv)))
+                               (newline)
+                               #t))
         ;; can the evaluation of rv alter the address of lv?
         (where beta (addr-of H_1 vmaps_1 lv))
+        (side-condition (begin (display `(alpha_2: ,(term beta)))
+                               (newline)
+                               #t))
+        
         (where H_2 (free-cell H_1 beta ty))
+        (side-condition (begin (display `(H_2: ,(term H_2)))
+                               (newline)
+                               #t))
         (where H_3 (move H_2 beta ty alpha))
         
         
@@ -358,7 +374,6 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; mutating an existing value
-#;
   (test--> machine-step
            (term (,prog ((1 (int 9))) ; heap
                         (((((g 1))) ,tmaps 
