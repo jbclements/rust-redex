@@ -108,7 +108,8 @@ u = ~(copy v); // invalidates p
   ;; sf (stack frame)
   [sf (vmaps tmaps bas)]
   ;; vmaps: maps variable names to addresses
-  [vmaps (((x alpha) ...) ...)]
+  [vmaps (vframe ...)]
+  [vframe ((x alpha) ...)]
   ;; tmaps : a map from names to types
   [tmaps (tmap ...)]
   [tmap ((x ty) ...)]
@@ -191,7 +192,13 @@ u = ~(copy v); // invalidates p
 
 ;; what's the address of this variable?
 (define-metafunction Patina-machine
-  var-addr : vmaps x -> alpha)
+  var-addr : vmaps x -> alpha
+  [(var-addr (((x_0 alpha_0) rest ...) vframe ...) x_0)          alpha_0]
+  [(var-addr (((x_1 alpha_1) (x_2 alpha_2) ...) vframe ...) x_0) (var-addr (((x_2 alpha_2) ...) vframe ...) x)
+                                                                 (side-condition (not (equal? (term x0) (term x1))))]
+  [(var-addr (() vframe ...) x)                                  (var-addr (vframe ...) x)]
+  
+  )
 
 ;; oh... there's no way to do self-referential data...
 (define test-struct-env
@@ -324,6 +331,8 @@ u = ~(copy v); // invalidates p
 (let ()
   (define prog (term (() ())))
   (define tmaps (term (((f unit) (g int)))))
+  (void)
+#;
   (test--> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = unit) mt)) mt)) done)))
@@ -332,6 +341,7 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; we can violate the type system, too...
+#;
   (test--> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = 99) mt)) mt)) done)))
@@ -340,6 +350,7 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; two steps
+#;
   (test-->> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = unit)
@@ -350,6 +361,7 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; mutating an existing value
+#;
   (test--> machine-step
            (term (,prog ((1 (int 9))) ; heap
                         (((((g 1))) ,tmaps 
