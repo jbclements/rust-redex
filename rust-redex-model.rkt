@@ -216,7 +216,6 @@ u = ~(copy v); // invalidates p
   [(size-of (sr ...) (struct-ty s l ...))
    ,(struct-size (term (sr ...)) (term s))])
 
-
 (define (struct-size struct-defs name)
   (match (filter (lambda (struct-def) 
                    (eq? (second struct-def) name))
@@ -224,9 +223,7 @@ u = ~(copy v); // invalidates p
     [empty (error 'struct-size
                   "no struct with name ~e" name)]
     [`((struct ,_1 ,_2 ,tys))
-     (apply + (map ))])
-  (match (dict-ref struct-defs name)
-    [(list 'struct ,name)]))
+     (apply + (map (lambda (n) (size-of struct-defs n)) tys))]))
 (check-equal? (term (size-of ,test-structs (struct-ty leaf-1 ))) 3)
 (check-equal? (term (size-of ,test-structs (struct-ty leaf-2 l))) 2)
 (check-equal? (term (size-of ,test-structs (struct-ty parent m n)))
