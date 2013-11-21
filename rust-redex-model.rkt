@@ -108,7 +108,8 @@ u = ~(copy v); // invalidates p
   ;; sf (stack frame)
   [sf (vmaps tmaps bas)]
   ;; vmaps: maps variable names to addresses
-  [vmaps (((x alpha) ...) ...)]
+  [vmaps (vframe ...)]
+  [vframe ((x alpha) ...)]
   ;; tmaps : a map from names to types
   [tmaps (tmap ...)]
   [tmap ((x ty) ...)]
@@ -161,7 +162,7 @@ u = ~(copy v); // invalidates p
         (where vmaps_2 (add-to-vmaps x alpha vmaps_1)))
    ;; mutation of variable
    (--> (prog H ((vmaps tmaps ((l ((lv = rv) sts)) bas)) S))
-        matched #;(prog H_3 ((vmaps_1 tmaps ((l sts) bas)) S))
+        #;matched (prog H_3 ((vmaps_1 tmaps ((l sts) bas)) S))
         ;; I think I need to ensure that the variable hidden
         ;; in the lv has already been initialized:
         (where x (lv-var lv))
@@ -172,9 +173,9 @@ u = ~(copy v); // invalidates p
         (where (H_1 vmaps_1)
                (rv--> prog H vmaps tmaps alpha rv))
         ;; can the evaluation of rv alter the address of lv?
-        #;(where beta (addr-of H_1 vmaps_1 lv))
-        #;(where H_2 (free-cell H_1 beta ty))
-        #;(where H_3 (move H_2 beta ty alpha))
+        (where beta (addr-of H_1 vmaps_1 lv))
+        (where H_2 (free-cell H_1 beta ty))
+        (where H_3 (move H_2 beta ty alpha))
         
         
         )))
@@ -191,20 +192,31 @@ u = ~(copy v); // invalidates p
 
 ;; what's the address of this variable?
 (define-metafunction Patina-machine
-  var-addr : vmaps x -> alpha)
+  var-addr : vmaps x -> alpha
+  [(var-addr (((x_0 alpha_0) rest ...) vframe ...) x_0)          alpha_0]
+  [(var-addr (((x_1 alpha_1) (x_2 alpha_2) ...) vframe ...) x_0) (var-addr (((x_2 alpha_2) ...) vframe ...) x)
+                                                                 (side-condition (not (equal? (term x0) (term x1))))]
+  [(var-addr (() vframe ...) x)                                  (var-addr (vframe ...) x)]
+  
+  )
 
 ;; oh... there's no way to do self-referential data...
-(define test-structs
+(define test-struct-env
   ;; a triple consists of two integers and a unit
   (term
-   ((struct leaf-1 () (int int unit))
+   ((struct newint () (int))
+    (struct leaf-1 () (int int unit))
     (struct leaf-2 (l1) 
-      ((& l1 int) 
+      ((& l1 imm int) 
        (~ (struct-ty leaf-1))))
     (struct parent (l2 l3)
       ((struct-ty leaf-1)
-       (~ (& l2 (struct-ty leaf-2 l3)))
-       (& l3 int))))))
+       (~ (& l2 imm (struct-ty leaf-2 l3)))
+       (& l3 imm int))))))
+
+(define small-test-struct-env
+  (term
+   ((struct newint () (int)))))
 
 ;; returns the size of a type's representation
 (define-metafunction Patina-machine
@@ -212,7 +224,7 @@ u = ~(copy v); // invalidates p
   [(size-of (sr ...) unit) 1]
   [(size-of (sr ...) int) 1]
   [(size-of (sr ...) (~ ty)) 1]
-  [(size-of (sr ...) (& l ty)) 1]
+  [(size-of (sr ...) (& l mq ty)) 1]
   [(size-of (sr ...) (struct-ty s l ...))
    ,(struct-size (term (sr ...)) (term s))])
 
@@ -220,13 +232,14 @@ u = ~(copy v); // invalidates p
   (match (filter (lambda (struct-def) 
                    (eq? (second struct-def) name))
                  struct-defs)
-    [empty (error 'struct-size
-                  "no struct with name ~e" name)]
-    [`((struct ,_1 ,_2 ,tys))
-     (apply + (map (lambda (n) (size-of struct-defs n)) tys))]))
-(check-equal? (term (size-of ,test-structs (struct-ty leaf-1 ))) 3)
-(check-equal? (term (size-of ,test-structs (struct-ty leaf-2 l))) 2)
-(check-equal? (term (size-of ,test-structs (struct-ty parent m n)))
+    ['() (error 'struct-size
+                "no struct with name ~e" name)]
+    [`((struct ,_name ,_params ,tys))
+     (apply + (map (lambda (n) (term (size-of ,struct-defs ,n))) tys))]))
+(check-equal? (term (size-of ,small-test-struct-env (struct-ty newint))) 1)
+(check-equal? (term (size-of ,test-struct-env (struct-ty leaf-1 ))) 3)
+(check-equal? (term (size-of ,test-struct-env (struct-ty leaf-2 l))) 2)
+(check-equal? (term (size-of ,test-struct-env (struct-ty parent m n)))
               5)
 
 (define test-heap 
@@ -257,7 +270,7 @@ u = ~(copy v); // invalidates p
 (check-equal?
  (term (lv-var zz)) (term zz))
 (check-equal?
- (term (lv-var (* ((zz o f1) o f2)))) (term zz))
+ (term (lv-var (* ((zz o 1) o 2)))) (term zz))
 
 (define-metafunction Patina-machine
   add-to-vmaps : x alpha vmaps -> vmaps
@@ -318,6 +331,7 @@ u = ~(copy v); // invalidates p
 (let ()
   (define prog (term (() ())))
   (define tmaps (term (((f unit) (g int)))))
+  (void)
   (test--> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = unit) mt)) mt)) done)))
@@ -344,6 +358,7 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; mutating an existing value
+#;
   (test--> machine-step
            (term (,prog ((1 (int 9))) ; heap
                         (((((g 1))) ,tmaps 
