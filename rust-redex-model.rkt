@@ -194,17 +194,22 @@ u = ~(copy v); // invalidates p
   var-addr : vmaps x -> alpha)
 
 ;; oh... there's no way to do self-referential data...
-(define test-structs
+(define test-struct-env
   ;; a triple consists of two integers and a unit
   (term
-   ((struct leaf-1 () (int int unit))
+   ((struct newint () (int))
+    (struct leaf-1 () (int int unit))
     (struct leaf-2 (l1) 
-      ((& l1 int) 
+      ((& l1 imm int) 
        (~ (struct-ty leaf-1))))
     (struct parent (l2 l3)
       ((struct-ty leaf-1)
-       (~ (& l2 (struct-ty leaf-2 l3)))
-       (& l3 int))))))
+       (~ (& l2 imm (struct-ty leaf-2 l3)))
+       (& l3 imm int))))))
+
+(define small-test-struct-env
+  (term
+   ((struct newint () (int)))))
 
 ;; returns the size of a type's representation
 (define-metafunction Patina-machine
@@ -220,13 +225,14 @@ u = ~(copy v); // invalidates p
   (match (filter (lambda (struct-def) 
                    (eq? (second struct-def) name))
                  struct-defs)
-    [empty (error 'struct-size
-                  "no struct with name ~e" name)]
-    [`((struct ,_1 ,_2 ,tys))
-     (apply + (map (lambda (n) (size-of struct-defs n)) tys))]))
-(check-equal? (term (size-of ,test-structs (struct-ty leaf-1 ))) 3)
-(check-equal? (term (size-of ,test-structs (struct-ty leaf-2 l))) 2)
-(check-equal? (term (size-of ,test-structs (struct-ty parent m n)))
+    ['() (error 'struct-size
+                "no struct with name ~e" name)]
+    [`((struct ,_name ,_params ,tys))
+     (apply + (map (lambda (n) (term (size-of ,struct-defs ,n))) tys))]))
+(check-equal? (term (size-of ,small-test-struct-env (struct-ty newint))) 1)
+(check-equal? (term (size-of ,test-struct-env (struct-ty leaf-1 ))) 3)
+(check-equal? (term (size-of ,test-struct-env (struct-ty leaf-2 l))) 2)
+(check-equal? (term (size-of ,test-struct-env (struct-ty parent m n)))
               5)
 
 (define test-heap 
