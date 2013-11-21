@@ -263,7 +263,7 @@ u = ~(copy v); // invalidates p
 (check-equal?
  (term (lv-var zz)) (term zz))
 (check-equal?
- (term (lv-var (* ((zz o f1) o f2)))) (term zz))
+ (term (lv-var (* ((zz o 1) o 2)))) (term zz))
 
 (define-metafunction Patina-machine
   add-to-vmaps : x alpha vmaps -> vmaps
