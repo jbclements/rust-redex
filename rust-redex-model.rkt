@@ -332,7 +332,6 @@ u = ~(copy v); // invalidates p
   (define prog (term (() ())))
   (define tmaps (term (((f unit) (g int)))))
   (void)
-#;
   (test--> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = unit) mt)) mt)) done)))
@@ -341,7 +340,6 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; we can violate the type system, too...
-#;
   (test--> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = 99) mt)) mt)) done)))
@@ -350,7 +348,6 @@ u = ~(copy v); // invalidates p
                           ,tmaps 
                           ((l1 mt) mt)) done))))
   ;; two steps
-#;
   (test-->> machine-step
            (term (,prog () ; heap
                         (((()) ,tmaps ((l1 ((f = unit)
