@@ -161,7 +161,7 @@ u = ~(copy v); // invalidates p
         (where vmaps_2 (add-to-vmaps x alpha vmaps_1)))
    ;; mutation of variable
    (--> (prog H ((vmaps tmaps ((l ((lv = rv) sts)) bas)) S))
-        matched #;(prog H_3 ((vmaps_1 tmaps ((l sts) bas)) S))
+        #;matched (prog H_3 ((vmaps_1 tmaps ((l sts) bas)) S))
         ;; I think I need to ensure that the variable hidden
         ;; in the lv has already been initialized:
         (where x (lv-var lv))
@@ -172,9 +172,9 @@ u = ~(copy v); // invalidates p
         (where (H_1 vmaps_1)
                (rv--> prog H vmaps tmaps alpha rv))
         ;; can the evaluation of rv alter the address of lv?
-        #;(where beta (addr-of H_1 vmaps_1 lv))
-        #;(where H_2 (free-cell H_1 beta ty))
-        #;(where H_3 (move H_2 beta ty alpha))
+        (where beta (addr-of H_1 vmaps_1 lv))
+        (where H_2 (free-cell H_1 beta ty))
+        (where H_3 (move H_2 beta ty alpha))
         
         
         )))
