@@ -217,7 +217,7 @@ u = ~(copy v); // invalidates p
   [(size-of (sr ...) unit) 1]
   [(size-of (sr ...) int) 1]
   [(size-of (sr ...) (~ ty)) 1]
-  [(size-of (sr ...) (& l ty)) 1]
+  [(size-of (sr ...) (& l mq ty)) 1]
   [(size-of (sr ...) (struct-ty s l ...))
    ,(struct-size (term (sr ...)) (term s))])
 
