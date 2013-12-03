@@ -13,12 +13,11 @@
   ;; function def'ns
   (fn (fun g ls ((x : ty) ...) bk))
   ;; blocks:
-  (bk (block l (let (x : ty) ...) st ...))
+  (bk (block l (let (x : ty) ...) (st ...) (drop (lv ...)))
   ;; statements:
   (st (lv = rv)
       (call g (l ...) (cm x) ...)
       (if0 x bk bk)
-      (drop lv)
       bk)
   ;; lvalues :
   ;; changing "field names" to be numbers
