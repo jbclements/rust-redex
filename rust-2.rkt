@@ -151,6 +151,18 @@
   (sort heap (lambda (pair1 pair2) (< (car pair1)
                                       (car pair2)))))
 
+;; useful heap predicates
+
+(define (in-range addr base size)
+  (and (>= addr base)
+       (< addr (+ base size))))
+
+(define (select H alpha z)
+  (let* [(matching (filter (lambda (pair) (in-range (car pair) alpha z)) H))
+         (sorted (sort-heap matching))
+         (values (map cadr sorted))]
+    values))
+
 ;; prefix sum
 
 (define-metafunction Patina-machine
@@ -218,6 +230,25 @@
                    (10 (ptr 1))
                    (11 (int 2))
                    (12 (ptr 3))]))
+
+;; shrink -- removes z contiguous addresses from domain of heap
+
+(define-metafunction Patina-machine
+  shrink : H alpha z -> H
+  
+  [(shrink H alpha z)
+   ,(filter (lambda (pair) (not (in-range (car pair) (term alpha) (term z))))
+            (term H))])
+
+(test-equal (term (shrink [(10 (ptr 1))
+                           (11 (int 2))
+                           (12 (ptr 3))
+                           (13 (ptr 4))
+                           (14 (ptr 5))]
+                           11
+                           3))
+            (term [(10 (ptr 1))
+                   (14 (ptr 5))]))
 
 ;; deinit -- deinitializes a block of memory
 
@@ -545,14 +576,6 @@
 ;; lvselect -- helper for writing tests, selects values for a portion
 ;; of the heap
 
-(define (select H alpha z)
-  (let* [(matching (filter (lambda (pair) (and (>= (car pair) alpha)
-                                               (< (car pair) (+ alpha z))))
-                           H))
-         (sorted (sort-heap matching))
-         (values (map cadr sorted))]
-    values))
-
 (define-metafunction Patina-machine
   lvselect : srs H V T lv -> (hv ...)
   
@@ -614,4 +637,47 @@
                             ,test-T
                             q))
             (term ((ptr 97))))
+
+;; free -- frees the memory owned by `alpha` which has type `ty`
+;;
+;; Note that this does *not* free (or deinitialize) `alpha` itself!
+
+(define-metafunction Patina-machine
+  free-struct : srs H alpha (ty ...) (z ...) -> H
+
+  [(free-struct srs H alpha () ())
+   H]
+
+  [(free-struct srs H alpha (ty_0 ty_1 ...) (z_0 z_1 ...))
+   (free-struct srs (free srs H ty_0 beta) (ty_1 ...) (z_1 ...))
+   (where beta ,(+ (term alpha) (term z_0)))])
+
+(define-metafunction Patina-machine
+  free : srs H ty alpha -> H
+  
+  [(free srs H int alpha) H]
+  [(free srs H (& l mq ty) alpha) H]
+  [(free srs H (~ ty) alpha)
+   H_2
+   (where (ptr beta) (deref H alpha))
+   (where z (sizeof srs ty))
+   (where H_1 (free srs H ty beta))
+   (where H_2 (shrink H beta z))]
+  [(free srs H (struct-ty s ls) alpha)
+   (free-struct srs H alpha tys zs)
+   (where tys (struct-tys srs s ls))
+   (where zs (offsets srs s ls))])
+
+(define-metafunction Patina-machine
+  lvfree : srs H V T lv -> H
+
+  [(lvfree srs H V T lv)
+   (free srs H ty alpha)
+   (where ty (lvtype srs T lv))
+   (where alpha (lvaddr srs H V T lv))])
+
+(test-equal (term (lvfree ,test-srs ,test-H ,test-V ,test-T p))
+            (term ((10 (int 22)) (11 (ptr 99)) (12 (int 23)) (13 (int 24)) (14 (ptr 98))
+                                 (15 (int 25)) (16 (int 26)) (17 (ptr 97)) (18 (ptr 98)) (97 (int 27)) (98 (int 28)))))
+            
 
