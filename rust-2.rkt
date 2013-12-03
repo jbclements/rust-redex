@@ -99,24 +99,29 @@
                          (struct-ty B (l0))))
          ]))
 
-(define test-T (term (((a int)
-                           (b (~ int)))
-                          ((c (struct-ty C (static)))
-                           (d (struct-ty D (static)))))))
+(define test-T (term (((i int)
+                       (p (~ int)))
+                      ((a (struct-ty A ()))
+                       (b (struct-ty B (static)))
+                       (c (struct-ty C (static)))))))
 
-(define test-V (term (((a 10)
-                           (b 11))
-                          ((c 12)
-                           (d 15)))))
+(define test-V (term (((i 10)
+                       (p 11))
+                      ((a 12)
+                       (b 13)
+                       (c 15)))))
 
-(define test-H (term [(10 (int 22)) ;; a == 22
-                      (11 (ptr 99)) ;; b == 99 (
-                      (12 (int 23)) ;; c:0
-                      (13 (int 24)) ;; c:1:0
-                      (14 (ptr 98)) ;; c:1:1
-                      ;; TODO: values for d
-                      (98 (int 25))   ;; *c:1:1
-                      (99 (int 26))])) ;; *b
+(define test-H (term [(10 (int 22)) ;; i == 22
+                      (11 (ptr 99)) ;; p == 99
+                      (12 (int 23)) ;; a:0
+                      (13 (int 24)) ;; b:0
+                      (14 (ptr 98)) ;; b:1
+                      (15 (int 25)) ;; c:1:0
+                      (16 (int 26)) ;; c:1:0
+                      (17 (ptr 97)) ;; c:1:1
+                      (97 (int 27))   ;; *c:1:1
+                      (98 (int 28))   ;; *b:1
+                      (99 (int 28))])) ;; *p
 
 ;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
 
@@ -237,7 +242,7 @@
   [(vtype T x_0)
    ,(get* (term x_0) (term T))])
 
-(test-equal (term (vtype ,test-T a)) (term int))
+(test-equal (term (vtype ,test-T i)) (term int))
 
 (test-equal (term (vtype ,test-T c)) (term (struct-ty C (static))))
 
@@ -344,9 +349,10 @@
   [(lvtype srs T (lv : f))
    (fieldtype srs (lvtype srs T lv) f)])
 
-(test-equal (term (lvtype ,test-srs ,test-T (* b))) (term int))
+(test-equal (term (lvtype ,test-srs ,test-T (* p))) (term int))
 
-(test-equal (term (lvtype ,test-srs ,test-T (d : 1))) (term (struct-ty A ())))
+;; FIXME --> l0 should be static
+(test-equal (term (lvtype ,test-srs ,test-T (c : 1))) (term (struct-ty B (l0))))
 
 ;; lvaddr -- lookup addr of variable in V
 
@@ -366,13 +372,13 @@
    (where (struct-ty s ls) (lvtype srs T lv))])
 
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c : 1)))
-            (term 13))
+            (term 16))
 
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T ((c : 1) : 1)))
-            (term 14))
+            (term 17))
 
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c : 1) : 1))))
-            (term 98))
+            (term 97))
 
 ;; malloc -- return an unused address with sufficient space for z entries
 
@@ -396,7 +402,7 @@
    H]
 
   [(copyfields H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
-   (copyfields (memcopy alpha_0 beta_0 z_0)
+   (copyfields (memcopy H alpha_0 beta_0 z_0)
                (z_1 ...)
                (alpha_1 ...)
                (beta_1 ...))])
@@ -426,7 +432,7 @@
    ;; offset of each field:
    (where zs_1 (offsets srs s lvs))
    ;; source address of value for each field:
-   (where alphas ,(map (lambda (lv) (term (lvaddr srs H V T ,lv)) (term lvs))))
+   (where alphas ,(map (lambda (lv) (term (lvaddr srs H V T ,lv))) (term lvs)))
    ;; target address for each field relative to base address alpha;
    (where betas ,(map (lambda (z) (+ (term alpha) z)) (term zs_1)))]
 
@@ -451,6 +457,33 @@
    (where (int number_1) (deref H gamma))
    (where number_2 ,(+ (term number_0) (term number_1)))])
 
+;; lvselect -- helper for writing tests, selects values for a portion
+;; of the heap
 
-   
+(define (select H alpha z)
+  (let* [(matching (filter (lambda (pair) (and (>= (car pair) alpha)
+                                               (< (car pair) (+ alpha z))))
+                           H))
+         (sorted (sort matching (lambda (pair1 pair2) (< (car pair1)
+                                                         (car pair2)))))
+         (values (map cadr sorted))]
+    values))
 
+(define-metafunction Patina-machine
+  lvselect : srs H V T lv -> (hv ...)
+  
+  [(lvselect srs H V T lv)
+   ,(select (term H) (term alpha) (term z))
+
+   (where ty (lvtype srs T lv))
+   (where alpha (lvaddr srs H V T lv))
+   (where z (sizeof srs ty))])
+
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V c)
+                                    (struct C (b1) (a b)))
+                            ,test-V
+                            ,test-T
+                            c))
+            (term ((int 23) (int 24) (ptr 98))))
