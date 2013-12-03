@@ -151,11 +151,13 @@
   [(vtype tmaps x_0)
    ,(get* (term x_0) (term tmaps))])
 
-(define test-vtypes (term (((a int) (b (~ int))) ((c (struct-ty A ()))))))
+(define test-vtypes (term (((a int) (b (~ int)))
+                           ((c (struct-ty C (static)))
+                            (d (struct-ty D (static)))))))
 
 (test-equal (term (vtype ,test-vtypes a)) (term int))
 
-(test-equal (term (vtype ,test-vtypes c)) (term (struct-ty A ())))
+(test-equal (term (vtype ,test-vtypes c)) (term (struct-ty C (static))))
 
 ;; struct-tys
 
@@ -243,21 +245,23 @@
   fieldtype : srs ty f -> ty
   
   [(fieldtype srs (struct-ty s ls) f)
-   (car (drop (struct-tys srs s ls) f))]) ; fixme--surely a better way
+   ,(car (drop (term (struct-tys srs s ls)) (term f)))]) ; fixme--surely a better way
 
 (define-metafunction Patina-machine
   lvtype : srs tmaps lv -> ty
   
-  [(lvtype tmaps x)
+  [(lvtype srs tmaps x)
    (vtype tmaps x)]
   
-  [(lvtype tmaps (* lv))
-   (dereftype (lvtype tmaps lv))]
+  [(lvtype srs tmaps (* lv))
+   (dereftype (lvtype srs tmaps lv))]
   
-  [(lvtype tmaps (lv : f))
-   (fieldtype (lvtype tmaps lv) f)])
+  [(lvtype srs tmaps (lv : f))
+   (fieldtype srs (lvtype srs tmaps lv) f)])
 
-(check-equal (term (lvtype test-structs test-
+(test-equal (term (lvtype ,test-structs ,test-vtypes (* b))) (term int))
+
+(test-equal (term (lvtype ,test-structs ,test-vtypes (d : 1))) (term (struct-ty A ())))
 
 ;; addr -- lookup addr of variable in vmaps
 
