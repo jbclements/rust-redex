@@ -80,6 +80,38 @@
   [sts (st ...)]
   [(alpha beta) number])
 
+;; unit test setup for helper fns
+
+(define test-srs
+  (term [(struct A () (int))
+         (struct B (l0) (int (& l0 mut int)))
+         (struct C (l0) ((struct-ty A ())
+                         (struct-ty B (l0))))
+         (struct D (l0) ((struct-ty C (l0))
+                         (struct-ty A ())
+                         (struct-ty C (l0))
+                         (struct-ty B (l0))))
+         ]))
+
+(define test-tmaps (term (((a int)
+                           (b (~ int)))
+                          ((c (struct-ty C (static)))
+                           (d (struct-ty D (static)))))))
+
+(define test-vmaps (term (((a 10)
+                           (b 11))
+                          ((c 12)
+                           (d 15)))))
+
+(define test-H (term [(10 (int 22)) ;; a == 22
+                      (11 (ptr 99)) ;; b == 99 (
+                      (12 (int 23)) ;; c:0
+                      (13 (int 24)) ;; c:1:0
+                      (14 (ptr 98)) ;; c:1:1
+                      ;; TODO: values for d
+                      (98 (int 25))   ;; *c:1:1
+                      (99 (int 26))])) ;; *b
+
 ;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
 
 (define (get key list)
@@ -151,13 +183,9 @@
   [(vtype tmaps x_0)
    ,(get* (term x_0) (term tmaps))])
 
-(define test-vtypes (term (((a int) (b (~ int)))
-                           ((c (struct-ty C (static)))
-                            (d (struct-ty D (static)))))))
+(test-equal (term (vtype ,test-tmaps a)) (term int))
 
-(test-equal (term (vtype ,test-vtypes a)) (term int))
-
-(test-equal (term (vtype ,test-vtypes c)) (term (struct-ty C (static))))
+(test-equal (term (vtype ,test-tmaps c)) (term (struct-ty C (static))))
 
 ;; struct-tys
 
@@ -170,18 +198,7 @@
   [(struct-tys ((struct s_0 (l_0 ...) (ty_0 ...)) sr ...) s_1 ls_1)
    (struct-tys (sr ...) s_1 ls_1)])
 
-(define test-structs
-  (term [(struct A () (int))
-         (struct B (l0) (int (& l0 mut int)))
-         (struct C (l0) ((struct-ty A ())
-                         (struct-ty B (l0))))
-         (struct D (l0) ((struct-ty C (l0))
-                         (struct-ty A ())
-                         (struct-ty C (l0))
-                         (struct-ty B (l0))))
-         ]))
-
-(test-equal (term (struct-tys ,test-structs A ()))
+(test-equal (term (struct-tys ,test-srs A ()))
             (term (int)))
 
 ;; sizeof
@@ -202,35 +219,35 @@
    ,(foldl + 0 (map (lambda (t) (term (sizeof srs ,t)))
                     (term (struct-tys srs s ls))))]) 
 
-(test-equal (term (sizeof ,test-structs (struct-ty A ())))
+(test-equal (term (sizeof ,test-srs (struct-ty A ())))
             (term 1))
 
-(test-equal (term (sizeof ,test-structs (struct-ty B (static))))
+(test-equal (term (sizeof ,test-srs (struct-ty B (static))))
             (term 2))
 
-(test-equal (term (sizeof ,test-structs (struct-ty C (static))))
+(test-equal (term (sizeof ,test-srs (struct-ty C (static))))
             (term 3))
 
 ;; offsetof
 
 (define-metafunction Patina-machine
-  offsetof : srs s ls f -> number
+  offsetof : srs ty f -> number
   
-  [(offsetof srs s ls f)
+  [(offsetof srs (struct-ty s ls) f)
    ,(foldl + 0 (map (lambda (t) (term (sizeof srs ,t)))
                     (take (term (struct-tys srs s ls))
                           (term f))))])
 
-(test-equal (term (offsetof ,test-structs C (static) 0))
+(test-equal (term (offsetof ,test-srs (struct-ty C (static)) 0))
             (term 0))
 
-(test-equal (term (offsetof ,test-structs C (static) 1))
+(test-equal (term (offsetof ,test-srs (struct-ty C (static)) 1))
             (term 1))
 
-(test-equal (term (offsetof ,test-structs D (static) 1))
+(test-equal (term (offsetof ,test-srs (struct-ty D (static)) 1))
             (term 3))
 
-(test-equal (term (offsetof ,test-structs D (static) 3))
+(test-equal (term (offsetof ,test-srs (struct-ty D (static)) 3))
             (term 7))
 
 ;; lvtype -- compute type of an lvalue
@@ -259,21 +276,36 @@
   [(lvtype srs tmaps (lv : f))
    (fieldtype srs (lvtype srs tmaps lv) f)])
 
-(test-equal (term (lvtype ,test-structs ,test-vtypes (* b))) (term int))
+(test-equal (term (lvtype ,test-srs ,test-tmaps (* b))) (term int))
 
-(test-equal (term (lvtype ,test-structs ,test-vtypes (d : 1))) (term (struct-ty A ())))
+(test-equal (term (lvtype ,test-srs ,test-tmaps (d : 1))) (term (struct-ty A ())))
 
 ;; addr -- lookup addr of variable in vmaps
 
-;(define-metafunction Patina-machine
-;  addr : srs H vmaps tmaps lv -> alpha
-;  
-;  [(addr srs H vmaps tmaps x)
-;   (vaddr vmaps x)]
-;  
-;  [(addr srs H vmaps tmaps (* lv))
-;  (deref H (addr H vmaps lv))]
-;  
-;  [(addr srs H vmaps tmaps (lv : f))
-;   ,(+ (addr srs H vmaps lv)
-;       (offsetof srs 
+(define-metafunction Patina-machine
+  ptr->alpha : hv -> alpha
+  
+  [(ptr->alpha (ptr alpha))
+   alpha])
+
+(define-metafunction Patina-machine
+  lvaddr : srs H vmaps tmaps lv -> alpha
+  
+  [(lvaddr srs H vmaps tmaps x)
+   (vaddr vmaps x)]
+  
+  [(lvaddr srs H vmaps tmaps (* lv))
+   (ptr->alpha (deref H (lvaddr srs H vmaps tmaps lv)))]
+       
+  [(lvaddr srs H vmaps tmaps (lv : f))
+   ,(+ (term (lvaddr srs H vmaps tmaps lv))
+       (term (offsetof srs (lvtype srs tmaps lv) f)))])
+
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-vmaps ,test-tmaps (c : 1)))
+            (term 13))
+
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-vmaps ,test-tmaps ((c : 1) : 1)))
+            (term 14))
+
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-vmaps ,test-tmaps (* ((c : 1) : 1))))
+            (term 98))
