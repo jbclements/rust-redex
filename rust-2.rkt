@@ -18,20 +18,23 @@
   (st (lv = rv)
       (call g (l ...) (cm x) ...)
       (if0 x bk bk)
+      (drop lv)
       bk)
   ;; lvalues :
   ;; changing "field names" to be numbers
+  (lvs (lv ...))
   (lv x (lv : f) (* lv))
   ;; rvalues :
-  (rv (copy lv)                    ;; copy lvalue
+  (rv (cm lv)                      ;; copy lvalue
       (& l mq lv)                  ;; take address of lvalue
-      (move lv)                    ;; move lvalue
-      (struct s (l ...) (f x) ...) ;; struct constant
-      (new x)                      ;; allocate memory
+      (struct s ls (lv ...))       ;; struct constant
+      (new lv)                     ;; allocate memory
       number                       ;; constant number
-      (+ x x)                      ;; sum
+      (+ lv lv)                    ;; sum
       )
+  (cm copy move)
   ;; types : 
+  (tys (ty ...))
   (ty (struct-ty s ls)             ;; s<'l...>
       (~ ty)                       ;; ~t
       (& l mq ty)                  ;; &'l mq t
@@ -77,7 +80,11 @@
   [bas (ba ...)]
   [ba (l sts)]
   [sts (st ...)]
-  [(alpha beta) number])
+  [(alphas betas gammas) (number ...)]
+  [(alpha beta gamma) number]
+  ;; z -- sizes, offsets
+  [zs (z ...)]
+  [z number])
 
 ;; unit test setup for helper fns
 
@@ -131,6 +138,22 @@
 (test-equal (get* (term e) (term (((a 1) (b 2)) ((c 3)) ((d 4) (e 5)))))
             5)
 
+;; prefix sum
+
+(define-metafunction Patina-machine
+  prefix-sum : z zs -> zs
+  
+  [(prefix-sum z_0 ()) ()]
+  [(prefix-sum z_0 (z_1 z_2 ...))
+   ,(append (term (z_3)) (term (prefix-sum z_3 (z_2 ...))))
+   (where z_3 ,(+ (term z_0) (term z_1)))])
+
+(test-equal (term (prefix-sum 0 ()))
+            (term ()))
+
+(test-equal (term (prefix-sum 0 (1 2 3)))
+            (term (1 3 6)))
+
 ;; deref function -- search a heap for a given address.
 
 (define-metafunction Patina-machine
@@ -155,6 +178,38 @@
 
 (test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 1 (int 23)))
             (term ((2 (ptr 23)) (1 (int 23)))))
+
+(test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 2 (int 23)))
+            (term ((2 (int 23)) (1 (int 22)))))
+
+;; memcopy -- copies memory from one address to another
+
+(define-metafunction Patina-machine
+  memcopy : H alpha beta number -> H
+  
+  [(memcopy H alpha beta 0) H]
+
+  [(memcopy H alpha beta number)
+   (memcopy (update H alpha (deref H beta))
+            ,(add1 (term alpha))
+            ,(add1 (term beta))
+            ,(sub1 (term number)))])
+
+(test-equal (term (memcopy [(10 (ptr 1))
+                            (11 (int 2))
+                            (12 (ptr 3))
+                            (20 (ptr 4))
+                            (21 (int 5))
+                            (22 (ptr 6))]
+                           20
+                           10
+                           3))
+            (term [(10 (ptr 1))
+                   (11 (int 2))
+                   (12 (ptr 3))
+                   (20 (ptr 1))
+                   (21 (int 2))
+                   (22 (ptr 3))]))
 
 (test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 2 (int 23)))
             (term ((2 (int 23)) (1 (int 22)))))
@@ -227,26 +282,40 @@
 (test-equal (term (sizeof ,test-srs (struct-ty C (static))))
             (term 3))
 
+;; offsets -- determines the offsets of each field of a struct
+
+(define-metafunction Patina-machine
+  offsets : srs s ls -> zs
+  
+  [(offsets srs s ls)
+   ,(append '(0) (term (prefix-sum 0 zs)))
+   (where tys (struct-tys srs s ls))
+   (where zs ,(drop-right (map (lambda (t) (term (sizeof srs ,t)))
+                               (term tys)) 1))])
+
+(test-equal (term (offsets ,test-srs C (static)))
+            (term (0 1)))
+
 ;; offsetof
 
 (define-metafunction Patina-machine
-  offsetof : srs ty f -> number
+  offsetof : srs s ls f -> z
   
-  [(offsetof srs (struct-ty s ls) f)
+  [(offsetof srs s ls f)
    ,(foldl + 0 (map (lambda (t) (term (sizeof srs ,t)))
                     (take (term (struct-tys srs s ls))
                           (term f))))])
 
-(test-equal (term (offsetof ,test-srs (struct-ty C (static)) 0))
+(test-equal (term (offsetof ,test-srs C (static) 0))
             (term 0))
 
-(test-equal (term (offsetof ,test-srs (struct-ty C (static)) 1))
+(test-equal (term (offsetof ,test-srs C (static) 1))
             (term 1))
 
-(test-equal (term (offsetof ,test-srs (struct-ty D (static)) 1))
+(test-equal (term (offsetof ,test-srs D (static) 1))
             (term 3))
 
-(test-equal (term (offsetof ,test-srs (struct-ty D (static)) 3))
+(test-equal (term (offsetof ,test-srs D (static) 3))
             (term 7))
 
 ;; lvtype -- compute type of an lvalue
@@ -282,23 +351,19 @@
 ;; lvaddr -- lookup addr of variable in V
 
 (define-metafunction Patina-machine
-  ptr->alpha : hv -> alpha
-  
-  [(ptr->alpha (ptr alpha))
-   alpha])
-
-(define-metafunction Patina-machine
   lvaddr : srs H V T lv -> alpha
   
   [(lvaddr srs H V T x)
    (vaddr V x)]
   
   [(lvaddr srs H V T (* lv))
-   (ptr->alpha (deref H (lvaddr srs H V T lv)))]
+   alpha
+   (where (ptr alpha) (deref H (lvaddr srs H V T lv)))]
        
   [(lvaddr srs H V T (lv : f))
    ,(+ (term (lvaddr srs H V T lv))
-       (term (offsetof srs (lvtype srs T lv) f)))])
+       (term (offsetof srs s ls f)))
+   (where (struct-ty s ls) (lvtype srs T lv))])
 
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c : 1)))
             (term 13))
@@ -309,8 +374,83 @@
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c : 1) : 1))))
             (term 98))
 
-;; rveval -- evaluate an rvalue and store it into the heap
+;; malloc -- return an unused address with sufficient space for z entries
 
-;(define-metafunction Patina-machine
-;  rveval : H 
+(define-metafunction Patina-machine
+  malloc : H z -> alpha
+
+  [(malloc H z)
+   alpha
+   (where alphas ,(map car (term H)))
+   (where alpha ,(add1 (apply max (term alphas))))])
+
+(test-equal (term (malloc ,test-H 100))
+            (term 100))
+
+;; rveval -- evaluate an rvalue and store it into the heap at address alpha
+
+(define-metafunction Patina-machine
+  copyfields : H zs alphas betas -> H
+
+  [(copyfields H () () ())
+   H]
+
+  [(copyfields H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
+   (copyfields (memcopy alpha_0 beta_0 z_0)
+               (z_1 ...)
+               (alpha_1 ...)
+               (beta_1 ...))])
+
+(define-metafunction Patina-machine
+  rveval : srs H V T alpha rv -> H
+
+  [(rveval srs H V T alpha (cm lv))
+   H_1
+   (where ty (lvtype srs T lv))
+   (where z (sizeof srs ty))
+   (where beta (lvaddr srs H V T lv))
+   (where H_1 (memcopy H alpha beta z))]
+
+  [(rveval srs H V T alpha (& l mq lv))
+   H_1
+   (where beta (lvaddr srs H V T lv))
+   (where H_1 (update H alpha (ptr beta)))]
+
+  [(rveval srs H V T alpha (struct s ls lvs))
+   (copyfields H zs_0 betas alphas)
+
+   ;; types of each field:
+   (where tys (struct-tys srs s ls))
+   ;; sizes of each field's type:
+   (where zs_0 ,(map (lambda (t) (term (sizeof srs ,t))) (term tys)))
+   ;; offset of each field:
+   (where zs_1 (offsets srs s lvs))
+   ;; source address of value for each field:
+   (where alphas ,(map (lambda (lv) (term (lvaddr srs H V T ,lv)) (term lvs))))
+   ;; target address for each field relative to base address alpha;
+   (where betas ,(map (lambda (z) (+ (term alpha) z)) (term zs_1)))]
+
+  [(rveval srs H V T alpha (new lv))
+   (update H_1 alpha (ptr gamma))
+
+   (where ty (lvtype srs T lv))
+   (where z (sizeof srs ty))
+   (where beta (lvaddr srs H V T lv))
+   (where gamma (malloc H z))
+   (where H_1 (memcopy H gamma beta z))]
+   
+  [(rveval srs H V T alpha number)
+   (update H_1 alpha (int number))]
+   
+  [(rveval srs H V T alpha (+ lv_0 lv_1))
+   (update H alpha (int number_2))
+
+   (where beta (lvaddr srs H V T lv))
+   (where gamma (lvaddr srs H V T lv))
+   (where (int number_0) (deref H beta))
+   (where (int number_1) (deref H gamma))
+   (where number_2 ,(+ (term number_0) (term number_1)))])
+
+
+   
 
