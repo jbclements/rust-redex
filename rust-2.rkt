@@ -80,16 +80,33 @@
   [sts (st ...)]
   [(alpha beta) number])
 
+;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
+
+(define (get key list)
+  (cadr (assoc key list)))
+
+(define (get* key lists)
+  (let ([v (assoc key (car lists))])
+    (if (not v)
+        (get* key (cdr lists))
+        (cadr v))))
+
+(test-equal (get* (term a) (term (((a 1) (b 2)) ((c 3)))))
+            1)
+
+(test-equal (get* (term c) (term (((a 1) (b 2)) ((c 3)))))
+            3)
+
+(test-equal (get* (term e) (term (((a 1) (b 2)) ((c 3)) ((d 4) (e 5)))))
+            5)
+
 ;; deref function -- search a heap for a given address.
 
 (define-metafunction Patina-machine
   deref : H alpha -> hv
 
-  [(deref ((alpha hv) (alpha_1 hv_1) ...) alpha)
-   hv]
-
-  [(deref ((alpha_0 hv_0) (alpha_1 hv_1) ...) alpha_2)
-   (deref ((alpha_1 hv_1) ...) alpha_2)])
+  [(deref H alpha)
+   ,(get (term alpha) (term H))])
 
 (test-equal (term (deref [(1 (ptr 22))] 1)) (term (ptr 22)))
 (test-equal (term (deref [(2 (ptr 23)) (1 (int 22))] 1)) (term (int 22)))
@@ -116,14 +133,8 @@
 (define-metafunction Patina-machine
   vaddr : vmaps x -> alpha
   
-  [(vaddr (((x_0 alpha_0) (x_1 alpha_1) ...) vmap_1 ...) x_0)
-   alpha_0]
-  
-  [(vaddr (((x_0 alpha_0) (x_1 alpha_1) ...) vmap_1 ...) x_2)
-   (vaddr (((x_1 alpha_1) ...) vmap_1 ...) x_2)]
-  
-  [(vaddr (() vmap_1 ...) x_2)
-   (vaddr (vmap_1 ...) x_2)])
+  [(vaddr vmaps x_0)
+   ,(get* (term x_0) (term vmaps))])
          
 (test-equal (term (vaddr (((a 0) (b 1)) ((c 2))) a))
             (term 0))
@@ -131,6 +142,20 @@
             (term 1))
 (test-equal (term (vaddr (((a 0) (b 1)) ((c 2))) c))
             (term 2))
+
+;; vtype -- lookup type of variable in vmaps
+ 
+(define-metafunction Patina-machine
+  vtype : tmaps x -> ty
+  
+  [(vtype tmaps x_0)
+   ,(get* (term x_0) (term tmaps))])
+
+(define test-vtypes (term (((a int) (b (~ int))) ((c (struct-ty A ()))))))
+
+(test-equal (term (vtype ,test-vtypes a)) (term int))
+
+(test-equal (term (vtype ,test-vtypes c)) (term (struct-ty A ())))
 
 ;; struct-tys
 
@@ -142,7 +167,6 @@
 
   [(struct-tys ((struct s_0 (l_0 ...) (ty_0 ...)) sr ...) s_1 ls_1)
    (struct-tys (sr ...) s_1 ls_1)])
-
 
 (define test-structs
   (term [(struct A () (int))
@@ -207,16 +231,45 @@
 (test-equal (term (offsetof ,test-structs D (static) 3))
             (term 7))
 
+;; lvtype -- compute type of an lvalue
+
+(define-metafunction Patina-machine
+  dereftype : ty -> ty
+  
+  [(dereftype (~ ty)) ty]
+  [(dereftype (& l mq ty)) ty])
+
+(define-metafunction Patina-machine
+  fieldtype : srs ty f -> ty
+  
+  [(fieldtype srs (struct-ty s ls) f)
+   (car (drop (struct-tys srs s ls) f))]) ; fixme--surely a better way
+
+(define-metafunction Patina-machine
+  lvtype : srs tmaps lv -> ty
+  
+  [(lvtype tmaps x)
+   (vtype tmaps x)]
+  
+  [(lvtype tmaps (* lv))
+   (dereftype (lvtype tmaps lv))]
+  
+  [(lvtype tmaps (lv : f))
+   (fieldtype (lvtype tmaps lv) f)])
+
+(check-equal (term (lvtype test-structs test-
+
 ;; addr -- lookup addr of variable in vmaps
 
 ;(define-metafunction Patina-machine
-;  addr : H vmaps lv -> alpha
+;  addr : srs H vmaps tmaps lv -> alpha
 ;  
-;  [(addr H vmaps x)
+;  [(addr srs H vmaps tmaps x)
 ;   (vaddr vmaps x)]
 ;  
-;  [(addr H vmaps (* lv))
-;   (deref H (addr H vmaps lv))]
+;  [(addr srs H vmaps tmaps (* lv))
+;  (deref H (addr H vmaps lv))]
 ;  
-;  [(addr H vmaps (lv : f))
-   
+;  [(addr srs H vmaps tmaps (lv : f))
+;   ,(+ (addr srs H vmaps lv)
+;       (offsetof srs 
