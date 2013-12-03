@@ -66,16 +66,15 @@
   ;; S (stack) : a stack of stack-frames
   [S (sf ...)]
   ;; sf (stack frame)
-  [sf (vmaps tmaps bas)]
-  ;; vmaps: maps variable names to addresses
-  [vmaps (vmap ...)]
+  [sf (V T bas)]
+  ;; V: maps variable names to addresses
+  [V (vmap ...)]
   [vmap ((x alpha) ...)]
-  ;; tmaps : a map from names to types
-  [tmaps (tmap ...)]
+  ;; T : a map from names to types
+  [T (tmap ...)]
   [tmap ((x ty) ...)]
-  ;; S (stack) : a list of block frames
-  [bas ((ba bas) ...)]
   ;; ba (block activation) : a label and a list of statements
+  [bas (ba ...)]
   [ba (l sts)]
   [sts (st ...)]
   [(alpha beta) number])
@@ -93,12 +92,12 @@
                          (struct-ty B (l0))))
          ]))
 
-(define test-tmaps (term (((a int)
+(define test-T (term (((a int)
                            (b (~ int)))
                           ((c (struct-ty C (static)))
                            (d (struct-ty D (static)))))))
 
-(define test-vmaps (term (((a 10)
+(define test-V (term (((a 10)
                            (b 11))
                           ((c 12)
                            (d 15)))))
@@ -160,13 +159,13 @@
 (test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 2 (int 23)))
             (term ((2 (int 23)) (1 (int 22)))))
 
-;; vaddr -- lookup addr of variable in vmaps
+;; vaddr -- lookup addr of variable in V
  
 (define-metafunction Patina-machine
-  vaddr : vmaps x -> alpha
+  vaddr : V x -> alpha
   
-  [(vaddr vmaps x_0)
-   ,(get* (term x_0) (term vmaps))])
+  [(vaddr V x_0)
+   ,(get* (term x_0) (term V))])
          
 (test-equal (term (vaddr (((a 0) (b 1)) ((c 2))) a))
             (term 0))
@@ -175,17 +174,17 @@
 (test-equal (term (vaddr (((a 0) (b 1)) ((c 2))) c))
             (term 2))
 
-;; vtype -- lookup type of variable in vmaps
+;; vtype -- lookup type of variable in V
  
 (define-metafunction Patina-machine
-  vtype : tmaps x -> ty
+  vtype : T x -> ty
   
-  [(vtype tmaps x_0)
-   ,(get* (term x_0) (term tmaps))])
+  [(vtype T x_0)
+   ,(get* (term x_0) (term T))])
 
-(test-equal (term (vtype ,test-tmaps a)) (term int))
+(test-equal (term (vtype ,test-T a)) (term int))
 
-(test-equal (term (vtype ,test-tmaps c)) (term (struct-ty C (static))))
+(test-equal (term (vtype ,test-T c)) (term (struct-ty C (static))))
 
 ;; struct-tys
 
@@ -265,22 +264,22 @@
    ,(car (drop (term (struct-tys srs s ls)) (term f)))]) ; fixme--surely a better way
 
 (define-metafunction Patina-machine
-  lvtype : srs tmaps lv -> ty
+  lvtype : srs T lv -> ty
   
-  [(lvtype srs tmaps x)
-   (vtype tmaps x)]
+  [(lvtype srs T x)
+   (vtype T x)]
   
-  [(lvtype srs tmaps (* lv))
-   (dereftype (lvtype srs tmaps lv))]
+  [(lvtype srs T (* lv))
+   (dereftype (lvtype srs T lv))]
   
-  [(lvtype srs tmaps (lv : f))
-   (fieldtype srs (lvtype srs tmaps lv) f)])
+  [(lvtype srs T (lv : f))
+   (fieldtype srs (lvtype srs T lv) f)])
 
-(test-equal (term (lvtype ,test-srs ,test-tmaps (* b))) (term int))
+(test-equal (term (lvtype ,test-srs ,test-T (* b))) (term int))
 
-(test-equal (term (lvtype ,test-srs ,test-tmaps (d : 1))) (term (struct-ty A ())))
+(test-equal (term (lvtype ,test-srs ,test-T (d : 1))) (term (struct-ty A ())))
 
-;; addr -- lookup addr of variable in vmaps
+;; lvaddr -- lookup addr of variable in V
 
 (define-metafunction Patina-machine
   ptr->alpha : hv -> alpha
@@ -289,23 +288,29 @@
    alpha])
 
 (define-metafunction Patina-machine
-  lvaddr : srs H vmaps tmaps lv -> alpha
+  lvaddr : srs H V T lv -> alpha
   
-  [(lvaddr srs H vmaps tmaps x)
-   (vaddr vmaps x)]
+  [(lvaddr srs H V T x)
+   (vaddr V x)]
   
-  [(lvaddr srs H vmaps tmaps (* lv))
-   (ptr->alpha (deref H (lvaddr srs H vmaps tmaps lv)))]
+  [(lvaddr srs H V T (* lv))
+   (ptr->alpha (deref H (lvaddr srs H V T lv)))]
        
-  [(lvaddr srs H vmaps tmaps (lv : f))
-   ,(+ (term (lvaddr srs H vmaps tmaps lv))
-       (term (offsetof srs (lvtype srs tmaps lv) f)))])
+  [(lvaddr srs H V T (lv : f))
+   ,(+ (term (lvaddr srs H V T lv))
+       (term (offsetof srs (lvtype srs T lv) f)))])
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-vmaps ,test-tmaps (c : 1)))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c : 1)))
             (term 13))
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-vmaps ,test-tmaps ((c : 1) : 1)))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T ((c : 1) : 1)))
             (term 14))
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-vmaps ,test-tmaps (* ((c : 1) : 1))))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c : 1) : 1))))
             (term 98))
+
+;; rveval -- evaluate an rvalue and store it into the heap
+
+;(define-metafunction Patina-machine
+;  rveval : H 
+
