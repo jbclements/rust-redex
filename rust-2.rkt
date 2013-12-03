@@ -13,7 +13,7 @@
   ;; function def'ns
   (fn (fun g ls ((x : ty) ...) bk))
   ;; blocks:
-  (bk (block l (let (x : ty) ...) (st ...) (drop (lv ...)))
+  (bk (block l (let (x : ty) ...) (st ...)))
   ;; statements:
   (st (lv = rv)
       (call g (l ...) (cm x) ...)
@@ -25,7 +25,7 @@
   (lv x (lv : f) (* lv))
   ;; rvalues :
   (rv (cm lv)                      ;; copy lvalue
-      (& l mq lv)                  ;; take address of lvalue
+      (& l mq lv)             ;; take address of lvalue
       (struct s ls (lv ...))       ;; struct constant
       (new lv)                     ;; allocate memory
       number                       ;; constant number
@@ -64,7 +64,7 @@
   ;; H (heap) : maps addresses to heap values
   [H ((alpha hv) ...)]
   ;; hv (heap values)
-  [hv (ptr alpha) (int number)]
+  [hv (ptr alpha) (int number) void]
   ;; S (stack) : a stack of stack-frames
   [S (sf ...)]
   ;; sf (stack frame)
@@ -102,13 +102,15 @@
                        (p (~ int)))
                       ((a (struct-ty A ()))
                        (b (struct-ty B (static)))
-                       (c (struct-ty C (static)))))))
+                       (c (struct-ty C (static)))
+                       (q (& b1 imm int))))))
 
 (define test-V (term (((i 10)
                        (p 11))
                       ((a 12)
                        (b 13)
-                       (c 15)))))
+                       (c 15)
+                       (q 18)))))
 
 (define test-H (term [(10 (int 22)) ;; i == 22
                       (11 (ptr 99)) ;; p == 99
@@ -118,6 +120,7 @@
                       (15 (int 25)) ;; c:1:0
                       (16 (int 26)) ;; c:1:0
                       (17 (ptr 97)) ;; c:1:1
+                      (18 (ptr 98)) ;; q
                       (97 (int 27))   ;; *c:1:1
                       (98 (int 28))   ;; *b:1
                       (99 (int 28))])) ;; *p
@@ -141,6 +144,12 @@
 
 (test-equal (get* (term e) (term (((a 1) (b 2)) ((c 3)) ((d 4) (e 5)))))
             5)
+
+;; sort-heap -- sort heap address in ascending order
+
+(define (sort-heap heap)
+  (sort heap (lambda (pair1 pair2) (< (car pair1)
+                                      (car pair2)))))
 
 ;; prefix sum
 
@@ -186,18 +195,67 @@
 (test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 2 (int 23)))
             (term ((2 (int 23)) (1 (int 22)))))
 
+;; extend -- grows a heap with z contiguous new addresses 
+
+(define-metafunction Patina-machine
+  extend : H alpha z -> H
+  
+  [(extend H alpha 0) H]
+
+  [(extend ((beta hv) ...) alpha z)
+   (extend ((alpha void) (beta hv) ...)
+            ,(add1 (term alpha))
+            ,(sub1 (term z)))])
+
+(test-equal (term (extend [(10 (ptr 1))
+                           (11 (int 2))
+                           (12 (ptr 3))]
+                           13
+                           3))
+            (term [(15 void)
+                   (14 void)
+                   (13 void)
+                   (10 (ptr 1))
+                   (11 (int 2))
+                   (12 (ptr 3))]))
+
+;; deinit -- deinitializes a block of memory
+
+(define-metafunction Patina-machine
+  deinit : H alpha z -> H
+  
+  [(deinit H alpha 0) H]
+
+  [(deinit H alpha z)
+   (deinit (update H alpha void)
+            ,(add1 (term alpha))
+            ,(sub1 (term z)))])
+
+(test-equal (term (deinit [(10 (ptr 1))
+                           (11 (int 2))
+                           (12 (ptr 3))
+                           (13 (ptr 4))
+                           (14 (ptr 5))]
+                           11
+                           3))
+            (term [(10 (ptr 1))
+                   (11 void)
+                   (12 void)
+                   (13 void)
+                   (14 (ptr 5))]))
+
 ;; memcopy -- copies memory from one address to another
 
 (define-metafunction Patina-machine
-  memcopy : H alpha beta number -> H
+  memcopy : H alpha beta z -> H
   
   [(memcopy H alpha beta 0) H]
 
-  [(memcopy H alpha beta number)
+  [(memcopy H alpha beta z)
    (memcopy (update H alpha (deref H beta))
             ,(add1 (term alpha))
             ,(add1 (term beta))
-            ,(sub1 (term number)))])
+            ,(sub1 (term z)))])
 
 (test-equal (term (memcopy [(10 (ptr 1))
                             (11 (int 2))
@@ -215,8 +273,29 @@
                    (21 (int 2))
                    (22 (ptr 3))]))
 
-(test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 2 (int 23)))
-            (term ((2 (int 23)) (1 (int 22)))))
+;; memmove -- copies memory then deinitializes the source
+
+(define-metafunction Patina-machine
+  memmove : H alpha beta z -> H
+  
+  [(memmove H alpha beta z)
+   (deinit (memcopy H alpha beta z) beta z)])
+
+(test-equal (term (memmove [(10 (ptr 1))
+                            (11 (int 2))
+                            (12 (ptr 3))
+                            (20 (ptr 4))
+                            (21 (int 5))
+                            (22 (ptr 6))]
+                           20
+                           10
+                           3))
+            (term [(10 void)
+                   (11 void)
+                   (12 void)
+                   (20 (ptr 1))
+                   (21 (int 2))
+                   (22 (ptr 3))]))
 
 ;; vaddr -- lookup addr of variable in V
  
@@ -262,7 +341,7 @@
 ;; sizeof
 
 (define-metafunction Patina-machine
-  sizeof : srs ty -> number
+  sizeof : srs ty -> z
   
   [(sizeof srs int) 
    1]
@@ -382,26 +461,26 @@
 ;; malloc -- return an unused address with sufficient space for z entries
 
 (define-metafunction Patina-machine
-  malloc : H z -> alpha
+  malloc : H z -> (H alpha)
 
   [(malloc H z)
-   alpha
+   (H_1 alpha)
    (where alphas ,(map car (term H)))
-   (where alpha ,(add1 (apply max (term alphas))))])
+   (where alpha ,(add1 (apply max (term alphas))))
+   (where H_1 (extend H alpha z))])
 
-(test-equal (term (malloc ,test-H 100))
-            (term 100))
+(test-equal (cadr (term (malloc ,test-H 2))) 100)
 
 ;; rveval -- evaluate an rvalue and store it into the heap at address alpha
 
 (define-metafunction Patina-machine
-  copyfields : H zs alphas betas -> H
+  movefields : H zs alphas betas -> H
 
-  [(copyfields H () () ())
+  [(movefields H () () ())
    H]
 
-  [(copyfields H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
-   (copyfields (memcopy H alpha_0 beta_0 z_0)
+  [(movefields H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
+   (movefields (memmove H alpha_0 beta_0 z_0)
                (z_1 ...)
                (alpha_1 ...)
                (beta_1 ...))])
@@ -409,12 +488,19 @@
 (define-metafunction Patina-machine
   rveval : srs H V T alpha rv -> H
 
-  [(rveval srs H V T alpha (cm lv))
+  [(rveval srs H V T alpha (copy lv))
    H_1
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
    (where beta (lvaddr srs H V T lv))
    (where H_1 (memcopy H alpha beta z))]
+
+  [(rveval srs H V T alpha (move lv))
+   H_1
+   (where ty (lvtype srs T lv))
+   (where z (sizeof srs ty))
+   (where beta (lvaddr srs H V T lv))
+   (where H_1 (memmove H alpha beta z))]
 
   [(rveval srs H V T alpha (& l mq lv))
    H_1
@@ -422,7 +508,7 @@
    (where H_1 (update H alpha (ptr beta)))]
 
   [(rveval srs H V T alpha (struct s ls lvs))
-   (copyfields H zs_0 betas alphas)
+   (movefields H zs_0 betas alphas)
 
    ;; types of each field:
    (where tys (struct-tys srs s ls))
@@ -436,16 +522,16 @@
    (where betas ,(map (lambda (z) (+ (term alpha) z)) (term zs_1)))]
 
   [(rveval srs H V T alpha (new lv))
-   (update H_1 alpha (ptr gamma))
+   (update H_2 alpha (ptr gamma))
 
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
    (where beta (lvaddr srs H V T lv))
-   (where gamma (malloc H z))
-   (where H_1 (memcopy H gamma beta z))]
+   (where (H_1 gamma) (malloc H z))
+   (where H_2 (memmove H_1 gamma beta z))]
    
   [(rveval srs H V T alpha number)
-   (update H_1 alpha (int number))]
+   (update H alpha (int number))]
    
   [(rveval srs H V T alpha (+ lv_0 lv_1))
    (update H alpha (int number_2))
@@ -463,8 +549,7 @@
   (let* [(matching (filter (lambda (pair) (and (>= (car pair) alpha)
                                                (< (car pair) (+ alpha z))))
                            H))
-         (sorted (sort matching (lambda (pair1 pair2) (< (car pair1)
-                                                         (car pair2)))))
+         (sorted (sort-heap matching))
          (values (map cadr sorted))]
     values))
 
@@ -478,6 +563,8 @@
    (where alpha (lvaddr srs H V T lv))
    (where z (sizeof srs ty))])
 
+;; tests for rveval and lvselect
+
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs ,test-H ,test-V ,test-T
                                     (vaddr ,test-V c)
@@ -486,3 +573,45 @@
                             ,test-T
                             c))
             (term ((int 23) (int 24) (ptr 98))))
+
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V c)
+                                    (struct C (b1) (a b)))
+                            ,test-V
+                            ,test-T
+                            a))
+            (term (void)))
+
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V p)
+                                    (new i))
+                            ,test-V
+                            ,test-T
+                            p))
+            (term ((ptr 100))))
+
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V p)
+                                    (new i))
+                            ,test-V
+                            ,test-T
+                            p))
+            (term ((ptr 100))))
+
+(test-equal (term (deref (rveval ,test-srs ,test-H ,test-V ,test-T
+                                 (vaddr ,test-V p)
+                                 (new i)) 100))
+            (term (int 22))) ;; *p now contains value of i
+
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V q)
+                                    (& mq imm (* ((c : 1) : 1))))
+                            ,test-V
+                            ,test-T
+                            q))
+            (term ((ptr 97))))
+
