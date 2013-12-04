@@ -4,20 +4,20 @@
          rackunit)
 
 (define-language Patina
-  (prog (srs (fn ...)))
+  (prog (srs fns))
   ;; structures:
   (srs (sr ...))
   (sr (struct s ls (ty ...)))
   ;; lifetimes:
   (ls (l ...))
   ;; function def'ns
+  (fns (fn ...))
   (fn (fun g ls ((x : ty) ...) bk))
   ;; blocks:
   (bk (block l (let (x : ty) ...) (st ...)))
   ;; statements:
   (st (lv = rv)
       (call g (l ...) (cm x) ...)
-      (if0 x bk bk)
       bk)
   ;; lvalues :
   ;; changing "field names" to be numbers
@@ -60,7 +60,7 @@
 
 (define-extended-language Patina-machine Patina
   ;; a configuration of the machine
-  [configuration (prog H S)]
+  [C (prog H S)]
   ;; H (heap) : maps addresses to heap values
   [H ((alpha hv) ...)]
   ;; hv (heap values)
@@ -68,7 +68,7 @@
   ;; S (stack) : a stack of stack-frames
   [S (sf ...)]
   ;; sf (stack frame)
-  [sf (V T bas)]
+  [sf (V T B)]
   ;; V: maps variable names to addresses
   [V (vmap ...)]
   [vmap ((x alpha) ...)]
@@ -76,7 +76,7 @@
   [T (tmap ...)]
   [tmap ((x ty) ...)]
   ;; ba (block activation) : a label and a list of statements
-  [bas (ba ...)]
+  [B (ba ...)]
   [ba (l sts)]
   [sts (st ...)]
   [(alphas betas gammas) (number ...)]
@@ -103,14 +103,16 @@
                       ((a (struct-ty A ()))
                        (b (struct-ty B (static)))
                        (c (struct-ty C (static)))
-                       (q (& b1 imm int))))))
+                       (q (& b1 imm int))
+                       (r (~ int))))))
 
 (define test-V (term (((i 10)
                        (p 11))
                       ((a 12)
                        (b 13)
                        (c 15)
-                       (q 18)))))
+                       (q 18)
+                       (r 19)))))
 
 (define test-H (term [(10 (int 22)) ;; i == 22
                       (11 (ptr 99)) ;; p == 99
@@ -121,9 +123,11 @@
                       (16 (int 26)) ;; c:1:0
                       (17 (ptr 97)) ;; c:1:1
                       (18 (ptr 98)) ;; q
-                      (97 (int 27))   ;; *c:1:1
-                      (98 (int 28))   ;; *b:1
-                      (99 (int 28))])) ;; *p
+                      (19 (ptr 96)) ;; r
+                      (96 (int 27))   ;; *c:1:1
+                      (97 (int 28))   ;; *c:1:1
+                      (98 (int 29))   ;; *b:1
+                      (99 (int 30))])) ;; *p
 
 ;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
 
@@ -250,6 +254,18 @@
             (term [(10 (ptr 1))
                    (14 (ptr 5))]))
 
+;; is-void -- test for void
+
+(define-metafunction Patina-machine
+  is-void : hv -> boolean
+
+  [(is-void void) #t]
+  [(is-void (ptr alpha)) #f]
+  [(is-void (int number)) #f])
+
+(test-equal (term (is-void (ptr 2))) #f)
+(test-equal (term (is-void void)) #t)
+
 ;; deinit -- deinitializes a block of memory
 
 (define-metafunction Patina-machine
@@ -261,6 +277,15 @@
    (deinit (update H alpha void)
             ,(add1 (term alpha))
             ,(sub1 (term z)))])
+
+(define-metafunction Patina-machine
+  lvdeinit : srs H V T lv -> H
+
+  [(lvdeinit srs H V T lv)
+   (deinit H alpha z)
+   (where ty (lvtype srs T lv))
+   (where alpha (lvaddr srs H V T lv))
+   (where z (sizeof srs ty))])
 
 (test-equal (term (deinit [(10 (ptr 1))
                            (11 (int 2))
@@ -649,14 +674,20 @@
    H]
 
   [(free-struct srs H alpha (ty_0 ty_1 ...) (z_0 z_1 ...))
-   (free-struct srs (free srs H ty_0 beta) (ty_1 ...) (z_1 ...))
+   (free-struct srs (free srs H ty_0 beta) alpha (ty_1 ...) (z_1 ...))
    (where beta ,(+ (term alpha) (term z_0)))])
 
 (define-metafunction Patina-machine
   free : srs H ty alpha -> H
+
+  [(free srs H ty alpha)
+   H
+   (side-condition (term (is-void (deref H alpha))))]
   
   [(free srs H int alpha) H]
+
   [(free srs H (& l mq ty) alpha) H]
+
   [(free srs H (~ ty) alpha)
    H_2
    (where (ptr beta) (deref H alpha))
@@ -677,7 +708,63 @@
    (where alpha (lvaddr srs H V T lv))])
 
 (test-equal (term (lvfree ,test-srs ,test-H ,test-V ,test-T p))
-            (term ((10 (int 22)) (11 (ptr 99)) (12 (int 23)) (13 (int 24)) (14 (ptr 98))
-                                 (15 (int 25)) (16 (int 26)) (17 (ptr 97)) (18 (ptr 98)) (97 (int 27)) (98 (int 28)))))
-            
+            (term (shrink ,test-H 99 1)))
 
+(test-equal (term (lvdeinit ,test-srs
+                            (lvfree ,test-srs ,test-H ,test-V ,test-T p)
+                            ,test-V
+                            ,test-T
+                            p))
+            (term (deinit (shrink ,test-H 99 1) 11 1)))
+            
+;; free-variables -- free variables upon exit from a block,
+;; also removes memory used by those variables
+
+(define-metafunction Patina-machine
+  free-variables : srs H vmap tmap -> H
+
+  [(free-variables srs H () ()) H]
+  [(free-variables srs
+                   H
+                   ((x_0 alpha_0) (x_1 alpha_1) ...)
+                   ((x_0 ty_0) (x_1 ty_1) ...))
+   (shrink (free srs H_1 ty_0 alpha_0) alpha_0 z)
+   (where z (sizeof srs ty_0))
+   (where H_1 (free-variables srs
+                              H
+                              ((x_1 alpha_1) ...)
+                              ((x_1 ty_1) ...)))])
+
+(test-equal (term (free-variables ,test-srs
+                                  ,test-H
+                                  ,(cadr test-V)
+                                  ,(cadr test-T)))
+            (term ((10 (int 22))
+                   (11 (ptr 99))
+                   (97 (int 28))
+                   (98 (int 29))
+                   (99 (int 30)))))
+            
+;; free-variables -- free variables upon exit from a block,
+;; also removes memory used by those variables
+
+;; --> -- machine step from one configuration C to the next
+
+; (define machine-step
+;   (reduction-relation
+;    Patina-machine
+;    
+;    ;; No more blocks in the current frame. Pop it.
+;    [--> (prog H ((() () ()) sf ...))
+;         (prog H (sf ...))]
+;  
+;    ;; Block with no more statements. Free variables.
+;    [--> ((srs fns) H (((vmap_0 vmap_1 ...)
+;                        (tmap_0 tmap_1 ...)
+;                        (ba_0 ba_1 ...))
+;                       sf ...))
+;         ((srs fns) H_1 (((vmap_1 ...)
+;                          (tmap_1 ...)
+;                          (ba_1 ...))
+;                         sf ...))
+;         (where H_1 (free-variables srs H vmap_1 tmap_1))]
