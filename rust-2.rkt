@@ -833,14 +833,14 @@
         ((srs fns) H_1 ((V T (l (st ...))) sf ...))
         (where alpha (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T alpha rv))]
-   
+
    ;; Push a new block.
    [--> ((srs fns) H S)
         ((srs fns)
          H_1 
          (((vmap_0 vmap ...)
            (tmap_0 tmap ...)
-           (ba_0 (block l_1 (st_1 ...)) ba_2 ...))
+           (ba_0 (l_1 (st_1 ...)) ba_2 ...))
           sf_1 ...))
 
         ;; unpack the stack frames:
@@ -860,7 +860,8 @@
 
         ;; create new block to push to top of block activation stack:
         ;; FIXME substitute a fresh lifetime for l_0?
-        (where ba_0 (block l_0 (st_0 ...)))]
+        (where ba_0 (l_0 (st_0 ...)))
+        ]
    ))
 
 ;; test stepping where top-most stack frame has no remaining blocks
@@ -868,20 +869,42 @@
          (term (,test-prog () ((() () ()))))
          (term (,test-prog () ())))
 
-;; test stepping where top-most stack frame has no remaining blocks
+;; test stepping where top-most stack frame has no remaining blocks and
+;; there is another stack frame beneath
 (test--> machine-step
          (term (,test-prog () ((() () ())
                                (,test-V ,test-T ()))))
          (term (,test-prog () ((,test-V ,test-T ())))))
 
-; (test--> machine-step
-;          (term (,test-prog
-;                 () ;; empty heap
-;                 ((() ;; empty vmap
-;                   () ;; empty tmap
-;                   (block l0
-;                          (let ((i : int)
-;                                (j : (~ int))))
-;                          ((i = 2)
-;                           (j = (new i))))))))
-;          (term ()))
+;; test stepping freeing a block with `i` and `p`
+(test--> machine-step
+         (term (,test-prog ,test-H ((,test-V ,test-T ((l0 ()) (l1 ()))))))
+         (term (,test-prog
+                ((12 (int 23)) (13 (int 24)) (14 (ptr 98)) (15 (int 25))
+                 (16 (int 26)) (17 (ptr 97)) (18 (ptr 98)) (19 (ptr 96))
+                 (96 (int 27)) (97 (int 28)) (98 (int 29)))
+                ((,(cdr test-V) ,(cdr test-T) ((l1 ())))))))
+
+;; test popping an empty block
+(test--> machine-step
+         (term (,test-prog () (((()) (()) ((l0 ()))))))
+         (term (,test-prog () ((() () ())))))
+
+;; test pushing a new block
+(test--> machine-step
+         (term (,test-prog
+                ()     ;; empty heap to start
+                (((()) ;; empty vmap to start
+                  (()) ;; empty vmap to start
+                  ((l0 ((block l1 (let (i : int)
+                                    (j : (~ int))) ((i = 2)
+                                                    (j = (new i)))))))))))
+          (term (,test-prog
+                 ((1 void) (0 void))
+                 (((((i 0) (j 1))
+                    ())
+                   (((i int) (j (~ int)))
+                    ())
+                   ((l1 ((i = 2) (j = (new i))))
+                    (l0 ())))))))
+
