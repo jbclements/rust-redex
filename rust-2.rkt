@@ -87,6 +87,9 @@
 
 ;; unit test setup for helper fns
 
+(define test-fns
+  (term []))
+
 (define test-srs
   (term [(struct A () (int))
          (struct B (l0) (int (& l0 mut int)))
@@ -97,6 +100,9 @@
                          (struct-ty C (l0))
                          (struct-ty B (l0))))
          ]))
+
+(define test-prog
+  (term (,test-srs ,test-fns)))
 
 (define test-T (term (((i int)
                        (p (~ int)))
@@ -129,6 +135,7 @@
                       (98 (int 29))   ;; *b:1
                       (99 (int 30))])) ;; *p
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
 
 (define (get key list)
@@ -149,6 +156,7 @@
 (test-equal (get* (term e) (term (((a 1) (b 2)) ((c 3)) ((d 4) (e 5)))))
             5)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; sort-heap -- sort heap address in ascending order
 
 (define (sort-heap heap)
@@ -167,6 +175,7 @@
          (values (map cadr sorted))]
     values))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; prefix sum
 
 (define-metafunction Patina-machine
@@ -183,6 +192,7 @@
 (test-equal (term (prefix-sum 0 (1 2 3)))
             (term (1 3 6)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; deref function -- search a heap for a given address.
 
 (define-metafunction Patina-machine
@@ -194,6 +204,7 @@
 (test-equal (term (deref [(1 (ptr 22))] 1)) (term (ptr 22)))
 (test-equal (term (deref [(2 (ptr 23)) (1 (int 22))] 1)) (term (int 22)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; update -- replaces value for alpha
 
 (define-metafunction Patina-machine
@@ -211,6 +222,7 @@
 (test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 2 (int 23)))
             (term ((2 (int 23)) (1 (int 22)))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; extend -- grows a heap with z contiguous new addresses 
 
 (define-metafunction Patina-machine
@@ -235,6 +247,7 @@
                    (11 (int 2))
                    (12 (ptr 3))]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; shrink -- removes z contiguous addresses from domain of heap
 
 (define-metafunction Patina-machine
@@ -254,6 +267,7 @@
             (term [(10 (ptr 1))
                    (14 (ptr 5))]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; is-void -- test for void
 
 (define-metafunction Patina-machine
@@ -266,6 +280,7 @@
 (test-equal (term (is-void (ptr 2))) #f)
 (test-equal (term (is-void void)) #t)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; deinit -- deinitializes a block of memory
 
 (define-metafunction Patina-machine
@@ -300,6 +315,7 @@
                    (13 void)
                    (14 (ptr 5))]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; memcopy -- copies memory from one address to another
 
 (define-metafunction Patina-machine
@@ -329,6 +345,7 @@
                    (21 (int 2))
                    (22 (ptr 3))]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; memmove -- copies memory then deinitializes the source
 
 (define-metafunction Patina-machine
@@ -353,6 +370,7 @@
                    (21 (int 2))
                    (22 (ptr 3))]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; vaddr -- lookup addr of variable in V
  
 (define-metafunction Patina-machine
@@ -368,6 +386,7 @@
 (test-equal (term (vaddr (((a 0) (b 1)) ((c 2))) c))
             (term 2))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; vtype -- lookup type of variable in V
  
 (define-metafunction Patina-machine
@@ -380,6 +399,7 @@
 
 (test-equal (term (vtype ,test-T c)) (term (struct-ty C (static))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; struct-tys
 
 (define-metafunction Patina-machine
@@ -394,6 +414,7 @@
 (test-equal (term (struct-tys ,test-srs A ()))
             (term (int)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; sizeof
 
 (define-metafunction Patina-machine
@@ -435,6 +456,7 @@
 (test-equal (term (offsets ,test-srs C (static)))
             (term (0 1)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; offsetof
 
 (define-metafunction Patina-machine
@@ -457,6 +479,7 @@
 (test-equal (term (offsetof ,test-srs D (static) 3))
             (term 7))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvtype -- compute type of an lvalue
 
 (define-metafunction Patina-machine
@@ -488,6 +511,7 @@
 ;; FIXME --> l0 should be static
 (test-equal (term (lvtype ,test-srs ,test-T (c : 1))) (term (struct-ty B (l0))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvaddr -- lookup addr of variable in V
 
 (define-metafunction Patina-machine
@@ -514,19 +538,22 @@
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c : 1) : 1))))
             (term 97))
 
-;; malloc -- return an unused address with sufficient space for z entries
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; malloc -- extend heap z contiguous addresses and retun starting address
 
 (define-metafunction Patina-machine
   malloc : H z -> (H alpha)
 
   [(malloc H z)
-   (H_1 alpha)
-   (where alphas ,(map car (term H)))
-   (where alpha ,(add1 (apply max (term alphas))))
-   (where H_1 (extend H alpha z))])
+   (H_1 beta)
+   (where (alpha ...) ,(map car (term H)))
+   (where beta ,(add1 (apply max (term (-1 alpha ...)))))
+   (where H_1 (extend H beta z))])
 
 (test-equal (cadr (term (malloc ,test-H 2))) 100)
+(test-equal (cadr (term (malloc () 2))) 0)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rveval -- evaluate an rvalue and store it into the heap at address alpha
 
 (define-metafunction Patina-machine
@@ -598,6 +625,7 @@
    (where (int number_1) (deref H gamma))
    (where number_2 ,(+ (term number_0) (term number_1)))])
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvselect -- helper for writing tests, selects values for a portion
 ;; of the heap
 
@@ -663,6 +691,7 @@
                             q))
             (term ((ptr 97))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; free -- frees the memory owned by `alpha` which has type `ty`
 ;;
 ;; Note that this does *not* free (or deinitialize) `alpha` itself!
@@ -717,6 +746,7 @@
                             p))
             (term (deinit (shrink ,test-H 99 1) 11 1)))
             
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; free-variables -- free variables upon exit from a block,
 ;; also removes memory used by those variables
 
@@ -735,6 +765,8 @@
                               ((x_1 alpha_1) ...)
                               ((x_1 ty_1) ...)))])
 
+;; this should free up all memory but that which pertains to `i` and `p`,
+;; as well as `97` and `98` which are marked as 'static'
 (test-equal (term (free-variables ,test-srs
                                   ,test-H
                                   ,(cadr test-V)
@@ -744,27 +776,112 @@
                    (97 (int 28))
                    (98 (int 29))
                    (99 (int 30)))))
-            
-;; free-variables -- free variables upon exit from a block,
-;; also removes memory used by those variables
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; alloc-variables -- allocate space for variables upon entry to a block,
+;; filling the memory with void
+
+(define-metafunction Patina-machine
+  alloc-variables : srs H ((x : ty) ...) -> (vmap tmap H)
+
+  [(alloc-variables srs H ()) (() () H)]
+  [(alloc-variables srs H ((x_0 : ty_0) (x_1 : ty_1) ...))
+   (((x_0 alpha_0) (x_2 alpha_2) ...)
+    ((x_0 ty_0) (x_2 ty_2) ...)
+    H_2)
+   (where z (sizeof srs ty_0))
+   (where (H_1 alpha_0) (malloc H z))
+   (where (((x_2 alpha_2) ...)
+           ((x_2 ty_2) ...)
+           H_2) (alloc-variables srs H_1 ((x_1 : ty_1) ...)))])
+
+;; this should free up all memory but that which pertains to `i` and `p`,
+;; as well as `97` and `98` which are marked as 'static'
+(test-equal (term (alloc-variables ,test-srs
+                                   ,test-H
+                                   ((j : int)
+                                    (k : (struct-ty B (static))))))
+            (term (((j 100) (k 101))
+                   ((j int) (k (struct-ty B (static))))
+                   ,(append (term ((102 void) (101 void) (100 void)))
+                            test-H))))
 
 ;; --> -- machine step from one configuration C to the next
 
-; (define machine-step
-;   (reduction-relation
-;    Patina-machine
-;    
-;    ;; No more blocks in the current frame. Pop it.
-;    [--> (prog H ((() () ()) sf ...))
-;         (prog H (sf ...))]
-;  
-;    ;; Block with no more statements. Free variables.
-;    [--> ((srs fns) H (((vmap_0 vmap_1 ...)
-;                        (tmap_0 tmap_1 ...)
-;                        (ba_0 ba_1 ...))
-;                       sf ...))
-;         ((srs fns) H_1 (((vmap_1 ...)
-;                          (tmap_1 ...)
-;                          (ba_1 ...))
-;                         sf ...))
-;         (where H_1 (free-variables srs H vmap_1 tmap_1))]
+(define machine-step
+  (reduction-relation
+   Patina-machine
+   
+   ;; No more blocks in the current frame. Pop it.
+   [--> (prog H ((() () ()) sf ...))
+        (prog H (sf ...))]
+   
+   ;; Block with no more statements. Free variables.
+   [--> ((srs fns) H (((vmap_0 vmap_1 ...)
+                       (tmap_0 tmap_1 ...)
+                       ((l ()) ba_1 ...))
+                      sf ...))
+        ((srs fns) H_1 (((vmap_1 ...)
+                         (tmap_1 ...)
+                         (ba_1 ...))
+                        sf ...))
+        (where H_1 (free-variables srs H vmap_0 tmap_0))]
+
+   ;; Assignments. The memory for the lvalue should always be alloc'd,
+   ;; though not always init'd.
+   [--> ((srs fns) H ((V T (l ((lv = rv) st ...))) sf ...))
+        ((srs fns) H_1 ((V T (l (st ...))) sf ...))
+        (where alpha (lvaddr srs H V T lv))
+        (where H_1 (rveval srs H V T alpha rv))]
+   
+   ;; Push a new block.
+   [--> ((srs fns) H S)
+        ((srs fns)
+         H_1 
+         (((vmap_0 vmap ...)
+           (tmap_0 tmap ...)
+           (ba_0 (block l_1 (st_1 ...)) ba_2 ...))
+          sf_1 ...))
+
+        ;; unpack the stack frames:
+        (where (sf_0 sf_1 ...) S)
+
+        ;; unpack the top-most stack frame sf_0:
+        (where ((vmap ...) (tmap ...) (ba_1 ba_2 ...)) sf_0)
+
+        ;; unpack the top-most block activation ba_1:
+        (where (l_1 sts_1) ba_1)
+
+        ;; unpack the statements sts_1 from top-most activation:
+        (where ((block l_0 (let (x_0 : ty_0) ...) (st_0 ...)) st_1 ...) sts_1)
+
+        ;; allocate space for variables in memory:
+        (where (vmap_0 tmap_0 H_1) (alloc-variables srs H ((x_0 : ty_0) ...)))
+
+        ;; create new block to push to top of block activation stack:
+        ;; FIXME substitute a fresh lifetime for l_0?
+        (where ba_0 (block l_0 (st_0 ...)))]
+   ))
+
+;; test stepping where top-most stack frame has no remaining blocks
+(test--> machine-step
+         (term (,test-prog () ((() () ()))))
+         (term (,test-prog () ())))
+
+;; test stepping where top-most stack frame has no remaining blocks
+(test--> machine-step
+         (term (,test-prog () ((() () ())
+                               (,test-V ,test-T ()))))
+         (term (,test-prog () ((,test-V ,test-T ())))))
+
+; (test--> machine-step
+;          (term (,test-prog
+;                 () ;; empty heap
+;                 ((() ;; empty vmap
+;                   () ;; empty tmap
+;                   (block l0
+;                          (let ((i : int)
+;                                (j : (~ int))))
+;                          ((i = 2)
+;                           (j = (new i))))))))
+;          (term ()))
