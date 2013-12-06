@@ -1,3 +1,4 @@
+;; -*- coding: utf-8; -*-
 #lang racket
 
 (require redex
@@ -63,20 +64,20 @@
   ;; a configuration of the machine
   [C (prog H V T S)]
   ;; H (heap) : maps addresses to heap values
-  [H ((alpha hv) ...)]
+  [H ((α hv) ...)]
   ;; hv (heap values)
-  [hv (ptr alpha) (int number) void]
+  [hv (ptr α) (int number) void]
   ;; V: maps variable names to addresses
   [V (vmap ...)]
-  [vmap ((x alpha) ...)]
+  [vmap ((x α) ...)]
   ;; T : a map from names to types
   [T (tmap ...)]
   [tmap ((x ty) ...)]
   ;; S (stack) : stack-frames contain pending statements
   [S (sf ...)]
   [sf (l sts)]
-  [(alphas betas gammas) (number ...)]
-  [(alpha beta gamma) number]
+  [(αs βs γs) (number ...)]
+  [(α β γ) number]
   ;; z -- sizes, offsets
   [zs (z ...)]
   [z number])
@@ -185,7 +186,7 @@
 ;; sort-heap -- sort heap address in ascending order
 
 (define (sort-heap heap)
-  (sort heap (lambda (pair1 pair2) (< (car pair1)
+  (sort heap (λ (pair1 pair2) (< (car pair1)
                                       (car pair2)))))
 
 ;; useful heap predicates
@@ -194,8 +195,8 @@
   (and (>= addr base)
        (< addr (+ base size))))
 
-(define (select H alpha z)
-  (let* [(matching (filter (lambda (pair) (in-range (car pair) alpha z)) H))
+(define (select H α z)
+  (let* [(matching (filter (λ (pair) (in-range (car pair) α z)) H))
          (sorted (sort-heap matching))
          (values (map cadr sorted))]
     values))
@@ -221,10 +222,10 @@
 ;; deref function -- search a heap for a given address.
 
 (define-metafunction Patina-machine
-  deref : H alpha -> hv
+  deref : H α -> hv
 
-  [(deref H alpha)
-   ,(get (term alpha) (term H))])
+  [(deref H α)
+   ,(get (term α) (term H))])
 
 (test-equal (term (deref [(1 (ptr 22))] 1)) (term (ptr 22)))
 (test-equal (term (deref [(2 (ptr 23)) (1 (int 22))] 1)) (term (int 22)))
@@ -246,16 +247,16 @@
             (term ,test-main))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; update -- replaces value for alpha
+;; update -- replaces value for α
 
 (define-metafunction Patina-machine
-  update : H alpha hv -> H
+  update : H α hv -> H
   
-  [(update ((alpha_0 hv_0) (alpha_1 hv_1) ...) alpha_0 hv_2)
-   ((alpha_0 hv_2) (alpha_1 hv_1) ...)]
+  [(update ((α_0 hv_0) (α_1 hv_1) ...) α_0 hv_2)
+   ((α_0 hv_2) (α_1 hv_1) ...)]
 
-  [(update ((alpha_0 hv_0) (alpha_1 hv_1) ...) alpha_2 hv_2)
-   ,(append (term ((alpha_0 hv_0))) (term (update ((alpha_1 hv_1) ...) alpha_2 hv_2)))])
+  [(update ((α_0 hv_0) (α_1 hv_1) ...) α_2 hv_2)
+   ,(append (term ((α_0 hv_0))) (term (update ((α_1 hv_1) ...) α_2 hv_2)))])
 
 (test-equal (term (update [(2 (ptr 23)) (1 (int 22))] 1 (int 23)))
             (term ((2 (ptr 23)) (1 (int 23)))))
@@ -267,13 +268,13 @@
 ;; extend -- grows a heap with z contiguous new addresses 
 
 (define-metafunction Patina-machine
-  extend : H alpha z -> H
+  extend : H α z -> H
   
-  [(extend H alpha 0) H]
+  [(extend H α 0) H]
 
-  [(extend ((beta hv) ...) alpha z)
-   (extend ((alpha void) (beta hv) ...)
-            ,(add1 (term alpha))
+  [(extend ((β hv) ...) α z)
+   (extend ((α void) (β hv) ...)
+            ,(add1 (term α))
             ,(sub1 (term z)))])
 
 (test-equal (term (extend [(10 (ptr 1))
@@ -292,10 +293,10 @@
 ;; shrink -- removes z contiguous addresses from domain of heap
 
 (define-metafunction Patina-machine
-  shrink : H alpha z -> H
+  shrink : H α z -> H
   
-  [(shrink H alpha z)
-   ,(filter (lambda (pair) (not (in-range (car pair) (term alpha) (term z))))
+  [(shrink H α z)
+   ,(filter (λ (pair) (not (in-range (car pair) (term α) (term z))))
             (term H))])
 
 (test-equal (term (shrink [(10 (ptr 1))
@@ -315,7 +316,7 @@
   is-void : hv -> boolean
 
   [(is-void void) #t]
-  [(is-void (ptr alpha)) #f]
+  [(is-void (ptr α)) #f]
   [(is-void (int number)) #f])
 
 (test-equal (term (is-void (ptr 2))) #f)
@@ -325,22 +326,22 @@
 ;; deinit -- deinitializes a block of memory
 
 (define-metafunction Patina-machine
-  deinit : H alpha z -> H
+  deinit : H α z -> H
   
-  [(deinit H alpha 0) H]
+  [(deinit H α 0) H]
 
-  [(deinit H alpha z)
-   (deinit (update H alpha void)
-            ,(add1 (term alpha))
+  [(deinit H α z)
+   (deinit (update H α void)
+            ,(add1 (term α))
             ,(sub1 (term z)))])
 
 (define-metafunction Patina-machine
   lvdeinit : srs H V T lv -> H
 
   [(lvdeinit srs H V T lv)
-   (deinit H alpha z)
+   (deinit H α z)
    (where ty (lvtype srs T lv))
-   (where alpha (lvaddr srs H V T lv))
+   (where α (lvaddr srs H V T lv))
    (where z (sizeof srs ty))])
 
 (test-equal (term (deinit [(10 (ptr 1))
@@ -360,14 +361,14 @@
 ;; memcopy -- copies memory from one address to another
 
 (define-metafunction Patina-machine
-  memcopy : H alpha beta z -> H
+  memcopy : H α β z -> H
   
-  [(memcopy H alpha beta 0) H]
+  [(memcopy H α β 0) H]
 
-  [(memcopy H alpha beta z)
-   (memcopy (update H alpha (deref H beta))
-            ,(add1 (term alpha))
-            ,(add1 (term beta))
+  [(memcopy H α β z)
+   (memcopy (update H α (deref H β))
+            ,(add1 (term α))
+            ,(add1 (term β))
             ,(sub1 (term z)))])
 
 (test-equal (term (memcopy [(10 (ptr 1))
@@ -390,10 +391,10 @@
 ;; memmove -- copies memory then deinitializes the source
 
 (define-metafunction Patina-machine
-  memmove : H alpha beta z -> H
+  memmove : H α β z -> H
   
-  [(memmove H alpha beta z)
-   (deinit (memcopy H alpha beta z) beta z)])
+  [(memmove H α β z)
+   (deinit (memcopy H α β z) β z)])
 
 (test-equal (term (memmove [(10 (ptr 1))
                             (11 (int 2))
@@ -415,7 +416,7 @@
 ;; vaddr -- lookup addr of variable in V
  
 (define-metafunction Patina-machine
-  vaddr : V x -> alpha
+  vaddr : V x -> α
   
   [(vaddr V x_0)
    ,(get* (term x_0) (term V))])
@@ -471,7 +472,7 @@
    1]
   
   [(sizeof srs (struct-ty s ls))
-   ,(foldl + 0 (map (lambda (t) (term (sizeof srs ,t)))
+   ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
                     (term (struct-tys srs s ls))))]) 
 
 (test-equal (term (sizeof ,test-srs (struct-ty A ())))
@@ -491,7 +492,7 @@
   [(offsets srs s ls)
    ,(append '(0) (term (prefix-sum 0 zs)))
    (where tys (struct-tys srs s ls))
-   (where zs ,(drop-right (map (lambda (t) (term (sizeof srs ,t)))
+   (where zs ,(drop-right (map (λ (t) (term (sizeof srs ,t)))
                                (term tys)) 1))])
 
 (test-equal (term (offsets ,test-srs C (static)))
@@ -504,7 +505,7 @@
   offsetof : srs s ls f -> z
   
   [(offsetof srs s ls f)
-   ,(foldl + 0 (map (lambda (t) (term (sizeof srs ,t)))
+   ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
                     (take (term (struct-tys srs s ls))
                           (term f))))])
 
@@ -556,14 +557,14 @@
 ;; lvaddr -- lookup addr of variable in V
 
 (define-metafunction Patina-machine
-  lvaddr : srs H V T lv -> alpha
+  lvaddr : srs H V T lv -> α
   
   [(lvaddr srs H V T x)
    (vaddr V x)]
   
   [(lvaddr srs H V T (* lv))
-   alpha
-   (where (ptr alpha) (deref H (lvaddr srs H V T lv)))]
+   α
+   (where (ptr α) (deref H (lvaddr srs H V T lv)))]
        
   [(lvaddr srs H V T (lv : f))
    ,(+ (term (lvaddr srs H V T lv))
@@ -583,13 +584,13 @@
 ;; malloc -- extend heap z contiguous addresses and retun starting address
 
 (define-metafunction Patina-machine
-  malloc : H z -> (H alpha)
+  malloc : H z -> (H α)
 
   [(malloc H z)
-   (H_1 beta)
-   (where (alpha ...) ,(map car (term H)))
-   (where beta ,(add1 (apply max (term (-1 alpha ...)))))
-   (where H_1 (extend H beta z))])
+   (H_1 β)
+   (where (α ...) ,(map car (term H)))
+   (where β ,(add1 (apply max (term (-1 α ...)))))
+   (where H_1 (extend H β z))])
 
 (test-equal (cadr (term (malloc ,test-H 2))) 100)
 (test-equal (cadr (term (malloc () 2))) 0)
@@ -598,75 +599,75 @@
 ;; movemany -- like memmove but for a series of regions
 
 (define-metafunction Patina-machine
-  movemany : H zs alphas betas -> H
+  movemany : H zs αs βs -> H
 
   [(movemany H () () ())
    H]
 
-  [(movemany H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
-   (movemany (memmove H alpha_0 beta_0 z_0)
+  [(movemany H (z_0 z_1 ...) (α_0 α_1 ...) (β_0 β_1 ...))
+   (movemany (memmove H α_0 β_0 z_0)
              (z_1 ...)
-             (alpha_1 ...)
-             (beta_1 ...))])
+             (α_1 ...)
+             (β_1 ...))])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rveval -- evaluate an rvalue and store it into the heap at address alpha
+;; rveval -- evaluate an rvalue and store it into the heap at address α
 
 (define-metafunction Patina-machine
-  rveval : srs H V T alpha rv -> H
+  rveval : srs H V T α rv -> H
 
-  [(rveval srs H V T alpha (copy lv))
+  [(rveval srs H V T α (copy lv))
    H_1
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
-   (where beta (lvaddr srs H V T lv))
-   (where H_1 (memcopy H alpha beta z))]
+   (where β (lvaddr srs H V T lv))
+   (where H_1 (memcopy H α β z))]
 
-  [(rveval srs H V T alpha (move lv))
+  [(rveval srs H V T α (move lv))
    H_1
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
-   (where beta (lvaddr srs H V T lv))
-   (where H_1 (memmove H alpha beta z))]
+   (where β (lvaddr srs H V T lv))
+   (where H_1 (memmove H α β z))]
 
-  [(rveval srs H V T alpha (& l mq lv))
+  [(rveval srs H V T α (& l mq lv))
    H_1
-   (where beta (lvaddr srs H V T lv))
-   (where H_1 (update H alpha (ptr beta)))]
+   (where β (lvaddr srs H V T lv))
+   (where H_1 (update H α (ptr β)))]
 
-  [(rveval srs H V T alpha (struct s ls lvs))
-   (movemany H zs_0 betas alphas)
+  [(rveval srs H V T α (struct s ls lvs))
+   (movemany H zs_0 βs αs)
 
    ;; types of each field:
    (where tys (struct-tys srs s ls))
    ;; sizes of each field's type:
-   (where zs_0 ,(map (lambda (t) (term (sizeof srs ,t))) (term tys)))
+   (where zs_0 ,(map (λ (t) (term (sizeof srs ,t))) (term tys)))
    ;; offset of each field:
    (where zs_1 (offsets srs s lvs))
    ;; source address of value for each field:
-   (where alphas ,(map (lambda (lv) (term (lvaddr srs H V T ,lv))) (term lvs)))
-   ;; target address for each field relative to base address alpha;
-   (where betas ,(map (lambda (z) (+ (term alpha) z)) (term zs_1)))]
+   (where αs ,(map (λ (lv) (term (lvaddr srs H V T ,lv))) (term lvs)))
+   ;; target address for each field relative to base address α;
+   (where βs ,(map (λ (z) (+ (term α) z)) (term zs_1)))]
 
-  [(rveval srs H V T alpha (new lv))
-   (update H_2 alpha (ptr gamma))
+  [(rveval srs H V T α (new lv))
+   (update H_2 α (ptr γ))
 
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
-   (where beta (lvaddr srs H V T lv))
-   (where (H_1 gamma) (malloc H z))
-   (where H_2 (memmove H_1 gamma beta z))]
+   (where β (lvaddr srs H V T lv))
+   (where (H_1 γ) (malloc H z))
+   (where H_2 (memmove H_1 γ β z))]
    
-  [(rveval srs H V T alpha number)
-   (update H alpha (int number))]
+  [(rveval srs H V T α number)
+   (update H α (int number))]
    
-  [(rveval srs H V T alpha (+ lv_0 lv_1))
-   (update H alpha (int number_2))
+  [(rveval srs H V T α (+ lv_0 lv_1))
+   (update H α (int number_2))
 
-   (where beta (lvaddr srs H V T lv))
-   (where gamma (lvaddr srs H V T lv))
-   (where (int number_0) (deref H beta))
-   (where (int number_1) (deref H gamma))
+   (where β (lvaddr srs H V T lv))
+   (where γ (lvaddr srs H V T lv))
+   (where (int number_0) (deref H β))
+   (where (int number_1) (deref H γ))
    (where number_2 ,(+ (term number_0) (term number_1)))])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -677,10 +678,10 @@
   lvselect : srs H V T lv -> (hv ...)
   
   [(lvselect srs H V T lv)
-   ,(select (term H) (term alpha) (term z))
+   ,(select (term H) (term α) (term z))
 
    (where ty (lvtype srs T lv))
-   (where alpha (lvaddr srs H V T lv))
+   (where α (lvaddr srs H V T lv))
    (where z (sizeof srs ty))])
 
 ;; tests for rveval and lvselect
@@ -736,39 +737,39 @@
             (term ((ptr 97))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; free -- frees the memory owned by `alpha` which has type `ty`
+;; free -- frees the memory owned by `α` which has type `ty`
 ;;
-;; Note that this does *not* free (or deinitialize) `alpha` itself!
+;; Note that this does *not* free (or deinitialize) `α` itself!
 
 (define-metafunction Patina-machine
-  free-struct : srs H alpha (ty ...) (z ...) -> H
+  free-struct : srs H α (ty ...) (z ...) -> H
 
-  [(free-struct srs H alpha () ())
+  [(free-struct srs H α () ())
    H]
 
-  [(free-struct srs H alpha (ty_0 ty_1 ...) (z_0 z_1 ...))
-   (free-struct srs (free srs H ty_0 beta) alpha (ty_1 ...) (z_1 ...))
-   (where beta ,(+ (term alpha) (term z_0)))])
+  [(free-struct srs H α (ty_0 ty_1 ...) (z_0 z_1 ...))
+   (free-struct srs (free srs H ty_0 β) α (ty_1 ...) (z_1 ...))
+   (where β ,(+ (term α) (term z_0)))])
 
 (define-metafunction Patina-machine
-  free : srs H ty alpha -> H
+  free : srs H ty α -> H
 
-  [(free srs H ty alpha)
+  [(free srs H ty α)
    H
-   (side-condition (term (is-void (deref H alpha))))]
+   (side-condition (term (is-void (deref H α))))]
   
-  [(free srs H int alpha) H]
+  [(free srs H int α) H]
 
-  [(free srs H (& l mq ty) alpha) H]
+  [(free srs H (& l mq ty) α) H]
 
-  [(free srs H (~ ty) alpha)
+  [(free srs H (~ ty) α)
    H_2
-   (where (ptr beta) (deref H alpha))
+   (where (ptr β) (deref H α))
    (where z (sizeof srs ty))
-   (where H_1 (free srs H ty beta))
-   (where H_2 (shrink H beta z))]
-  [(free srs H (struct-ty s ls) alpha)
-   (free-struct srs H alpha tys zs)
+   (where H_1 (free srs H ty β))
+   (where H_2 (shrink H β z))]
+  [(free srs H (struct-ty s ls) α)
+   (free-struct srs H α tys zs)
    (where tys (struct-tys srs s ls))
    (where zs (offsets srs s ls))])
 
@@ -776,9 +777,9 @@
   lvfree : srs H V T lv -> H
 
   [(lvfree srs H V T lv)
-   (free srs H ty alpha)
+   (free srs H ty α)
    (where ty (lvtype srs T lv))
-   (where alpha (lvaddr srs H V T lv))])
+   (where α (lvaddr srs H V T lv))])
 
 (test-equal (term (lvfree ,test-srs ,test-H ,test-V ,test-T p))
             (term (shrink ,test-H 99 1)))
@@ -800,13 +801,13 @@
   [(free-variables srs H () ()) H]
   [(free-variables srs
                    H
-                   ((x_0 alpha_0) (x_1 alpha_1) ...)
+                   ((x_0 α_0) (x_1 α_1) ...)
                    ((x_0 ty_0) (x_1 ty_1) ...))
-   (shrink (free srs H_1 ty_0 alpha_0) alpha_0 z)
+   (shrink (free srs H_1 ty_0 α_0) α_0 z)
    (where z (sizeof srs ty_0))
    (where H_1 (free-variables srs
                               H
-                              ((x_1 alpha_1) ...)
+                              ((x_1 α_1) ...)
                               ((x_1 ty_1) ...)))])
 
 ;; this should free up all memory but that which pertains to `i` and `p`,
@@ -830,12 +831,12 @@
 
   [(alloc-variables srs H ()) (() () H)]
   [(alloc-variables srs H ((x_0 : ty_0) (x_1 : ty_1) ...))
-   (((x_0 alpha_0) (x_2 alpha_2) ...)
+   (((x_0 α_0) (x_2 α_2) ...)
     ((x_0 ty_0) (x_2 ty_2) ...)
     H_2)
    (where z (sizeof srs ty_0))
-   (where (H_1 alpha_0) (malloc H z))
-   (where (((x_2 alpha_2) ...)
+   (where (H_1 α_0) (malloc H z))
+   (where (((x_2 α_2) ...)
            ((x_2 ty_2) ...)
            H_2) (alloc-variables srs H_1 ((x_1 : ty_1) ...)))])
 
@@ -866,8 +867,8 @@
    ;; though not always init'd.
    [--> ((srs fns) H V T [(l ((lv = rv) st ...)) sf ...])
         ((srs fns) H_1 V T [(l (st ...)) sf ...])
-        (where alpha (lvaddr srs H V T lv))
-        (where H_1 (rveval srs H V T alpha rv))]
+        (where α (lvaddr srs H V T lv))
+        (where H_1 (rveval srs H V T α rv))]
 
    ;; Push a new block.
    [--> ((srs fns) H (vmap ...) (tmap ...)
@@ -898,25 +899,25 @@
         ;; unpack the statements sts_1 from top-most activation:
         (where ((call g ls_a lvs_a) st_r ...) sts_1)
         ;; determine the types of the actual args to be passed:
-        (where tys_a ,(map (lambda (lv) (term (lvtype srs T ,lv)))
+        (where tys_a ,(map (λ (lv) (term (lvtype srs T ,lv)))
                            (term lvs_a)))
         ;; determine sizes of those types
-        (where zs_a ,(map (lambda (ty) (term (sizeof srs ,ty)))
+        (where zs_a ,(map (λ (ty) (term (sizeof srs ,ty)))
                           (term tys_a)))
         ;; determine where lvalues are found in memory
-        (where alphas_a ,(map (lambda (lv) (term (lvaddr srs H V T ,lv)))
+        (where αs_a ,(map (λ (lv) (term (lvaddr srs H V T ,lv)))
                               (term lvs_a)))
         ;; lookup the fun def'n (FIXME s/ls_f/ls_a/):
         (where (fun g ls_f ((x_f : ty_f) ...) bk_f) (fun-defn fns g))
         ;; allocate space for parameters in memory:
         (where (vmap_a tmap_a H_1) (alloc-variables srs H ((x_f : ty_f) ...)))
         ;; determine addresses for each formal argument:
-        (where betas_f ,(map (lambda (lv) (term (lvaddr srs H_1
+        (where βs_f ,(map (λ (lv) (term (lvaddr srs H_1
                                                         (vmap_a) (tmap_a)
                                                         ,lv)))
                              (term (x_f ...))))
         ;; move from actual params into formal params:
-        (where H_2 (movemany H_1 zs_a betas_f alphas_a))
+        (where H_2 (movemany H_1 zs_a βs_f αs_a))
         ]
    ))
 
