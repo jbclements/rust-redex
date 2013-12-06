@@ -16,18 +16,18 @@
   (prog (srs fns))
   ;; structures:
   (srs (sr ...))
-  (sr (struct s ls (ty ...)))
+  (sr (struct s ℓs (ty ...)))
   ;; lifetimes:
-  (ls (l ...))
+  (ℓs (ℓ ...))
   ;; function def'ns
   (fns (fn ...))
-  (fn (fun g ls ((x : ty) ...) bk))
+  (fn (fun g ℓs ((x : ty) ...) bk))
   ;; blocks:
-  (bk (block l (let (x : ty) ...) sts))
+  (bk (block ℓ (let (x : ty) ...) sts))
   ;; statements:
   [sts (st ...)]
   (st (lv = rv)
-      (call g ls lvs)
+      (call g ℓs lvs)
       bk)
   ;; lvalues :
   ;; changing "field names" to be numbers
@@ -35,8 +35,8 @@
   (lv x (lv · f) (* lv))
   ;; rvalues :
   (rv (cm lv)                      ;; copy lvalue
-      (& l mq lv)             ;; take address of lvalue
-      (struct s ls (lv ...))       ;; struct constant
+      (& ℓ mq lv)             ;; take address of lvalue
+      (struct s ℓs (lv ...))       ;; struct constant
       (new lv)                     ;; allocate memory
       number                       ;; constant number
       (+ lv lv)                    ;; sum
@@ -44,9 +44,9 @@
   (cm copy move)
   ;; types : 
   (tys (ty ...))
-  (ty (struct-ty s ls)             ;; s<'l...>
+  (ty (struct-ty s ℓs)             ;; s<'ℓ...>
       (~ ty)                       ;; ~t
-      (& l mq ty)                  ;; &'l mq t
+      (& ℓ mq ty)                  ;; &'ℓ mq t
       int)                         ;; int
   ;; mq : mutability qualifier
   (mq mut imm)
@@ -57,7 +57,7 @@
   ;; structure names
   (s variable-not-otherwise-mentioned)
   ;; labels
-  (l variable-not-otherwise-mentioned)
+  (ℓ variable-not-otherwise-mentioned)
   ;; field "names"
   (f number)
   )
@@ -83,7 +83,7 @@
   [tmap ((x ty) ...)]
   ;; S (stack) : stack-frames contain pending statements
   [S (sf ...)]
-  [sf (l sts)]
+  [sf (ℓ sts)]
   [(αs βs γs) (number ...)]
   [(α β γ) number]
   ;; z -- sizes, offsets
@@ -246,7 +246,7 @@
   
   [(fun-defn (fn_0 fn_1 ...) g)
    fn_0
-   (where (fun g ls ((x : ty) ...) bk) fn_0)]
+   (where (fun g ℓs ((x : ty) ...) bk) fn_0)]
 
   [(fun-defn (fn_0 fn_1 ...) g)
    (fun-defn (fn_1 ...) g)])
@@ -453,13 +453,13 @@
 ;; struct-tys
 
 (define-metafunction Patina-machine
-  struct-tys : srs s ls -> (ty ...)
+  struct-tys : srs s ℓs -> (ty ...)
   
-  [(struct-tys ((struct s_0 (l_0 ...) (ty_0 ...)) sr ...) s_0 ls_1)
+  [(struct-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 ℓs_1)
    (ty_0 ...)] ;; FIXME subst lifetimes
 
-  [(struct-tys ((struct s_0 (l_0 ...) (ty_0 ...)) sr ...) s_1 ls_1)
-   (struct-tys (sr ...) s_1 ls_1)])
+  [(struct-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_1 ℓs_1)
+   (struct-tys (sr ...) s_1 ℓs_1)])
 
 (test-equal (term (struct-tys ,test-srs A ()))
             (term (int)))
@@ -476,12 +476,12 @@
   [(sizeof srs (~ ty))
    1]
   
-  [(sizeof srs (& l mq ty))
+  [(sizeof srs (& ℓ mq ty))
    1]
   
-  [(sizeof srs (struct-ty s ls))
+  [(sizeof srs (struct-ty s ℓs))
    ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
-                    (term (struct-tys srs s ls))))]) 
+                    (term (struct-tys srs s ℓs))))]) 
 
 (test-equal (term (sizeof ,test-srs (struct-ty A ())))
             (term 1))
@@ -495,11 +495,11 @@
 ;; offsets -- determines the offsets of each field of a struct
 
 (define-metafunction Patina-machine
-  offsets : srs s ls -> zs
+  offsets : srs s ℓs -> zs
   
-  [(offsets srs s ls)
+  [(offsets srs s ℓs)
    ,(append '(0) (term (prefix-sum 0 zs)))
-   (where tys (struct-tys srs s ls))
+   (where tys (struct-tys srs s ℓs))
    (where zs ,(drop-right (map (λ (t) (term (sizeof srs ,t)))
                                (term tys)) 1))])
 
@@ -510,11 +510,11 @@
 ;; offsetof
 
 (define-metafunction Patina-machine
-  offsetof : srs s ls f -> z
+  offsetof : srs s ℓs f -> z
   
-  [(offsetof srs s ls f)
+  [(offsetof srs s ℓs f)
    ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
-                    (take (term (struct-tys srs s ls))
+                    (take (term (struct-tys srs s ℓs))
                           (term f))))])
 
 (test-equal (term (offsetof ,test-srs C (static) 0))
@@ -536,13 +536,13 @@
   dereftype : ty -> ty
   
   [(dereftype (~ ty)) ty]
-  [(dereftype (& l mq ty)) ty])
+  [(dereftype (& ℓ mq ty)) ty])
 
 (define-metafunction Patina-machine
   fieldtype : srs ty f -> ty
   
-  [(fieldtype srs (struct-ty s ls) f)
-   ,(car (drop (term (struct-tys srs s ls)) (term f)))]) ; fixme--surely a better way
+  [(fieldtype srs (struct-ty s ℓs) f)
+   ,(car (drop (term (struct-tys srs s ℓs)) (term f)))]) ; fixme--surely a better way
 
 (define-metafunction Patina-machine
   lvtype : srs T lv -> ty
@@ -576,8 +576,8 @@
        
   [(lvaddr srs H V T (lv · f))
    ,(+ (term (lvaddr srs H V T lv))
-       (term (offsetof srs s ls f)))
-   (where (struct-ty s ls) (lvtype srs T lv))])
+       (term (offsetof srs s ℓs f)))
+   (where (struct-ty s ℓs) (lvtype srs T lv))])
 
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c · 1)))
             (term 16))
@@ -638,16 +638,16 @@
    (where β (lvaddr srs H V T lv))
    (where H_1 (memmove H α β z))]
 
-  [(rveval srs H V T α (& l mq lv))
+  [(rveval srs H V T α (& ℓ mq lv))
    H_1
    (where β (lvaddr srs H V T lv))
    (where H_1 (update H α (ptr β)))]
 
-  [(rveval srs H V T α (struct s ls lvs))
+  [(rveval srs H V T α (struct s ℓs lvs))
    (movemany H zs_0 βs αs)
 
    ;; types of each field:
-   (where tys (struct-tys srs s ls))
+   (where tys (struct-tys srs s ℓs))
    ;; sizes of each field's type:
    (where zs_0 ,(map (λ (t) (term (sizeof srs ,t))) (term tys)))
    ;; offset of each field:
@@ -768,7 +768,7 @@
   
   [(free srs H int α) H]
 
-  [(free srs H (& l mq ty) α) H]
+  [(free srs H (& ℓ mq ty) α) H]
 
   [(free srs H (~ ty) α)
    H_2
@@ -776,10 +776,10 @@
    (where z (sizeof srs ty))
    (where H_1 (free srs H ty β))
    (where H_2 (shrink H β z))]
-  [(free srs H (struct-ty s ls) α)
+  [(free srs H (struct-ty s ℓs) α)
    (free-struct srs H α tys zs)
-   (where tys (struct-tys srs s ls))
-   (where zs (offsets srs s ls))])
+   (where tys (struct-tys srs s ℓs))
+   (where zs (offsets srs s ℓs))])
 
 (define-metafunction Patina-machine
   lvfree : srs H V T lv -> H
@@ -867,14 +867,14 @@
    
    ;; Stack frame with no more statements. Free variables.
    [--> ((srs fns) H [vmap_0 vmap_1 ...] [tmap_0 tmap_1 ...]
-         [(l ()) sf_1 ...])
+         [(ℓ ()) sf_1 ...])
         ((srs fns) H_1 [vmap_1 ...] [tmap_1 ...] [sf_1 ...])
         (where H_1 (free-variables srs H vmap_0 tmap_0))]
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
    ;; though not always init'd.
-   [--> ((srs fns) H V T [(l ((lv = rv) st ...)) sf ...])
-        ((srs fns) H_1 V T [(l (st ...)) sf ...])
+   [--> ((srs fns) H V T [(ℓ ((lv = rv) st ...)) sf ...])
+        ((srs fns) H_1 V T [(ℓ (st ...)) sf ...])
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
 
@@ -882,30 +882,30 @@
    [--> ((srs fns) H (vmap ...) (tmap ...)
          [sf_1 sf_2 ...])
         ((srs fns) H_1  [vmap_b vmap ...] [tmap_b tmap ...]
-         [sf_b (l_1 [st_1 ...]) sf_2 ...])
+         [sf_b (ℓ_1 [st_1 ...]) sf_2 ...])
 
         ;; unpack the top-most stack frame sf_1:
-        (where (l_1 [st_0 st_1 ...]) sf_1)
+        (where (ℓ_1 [st_0 st_1 ...]) sf_1)
         ;; unpack the next statement st_0, which should be a block:
-        (where (block l_b (let (x_b : ty_b) ...) (st_b ...)) st_0)
+        (where (block ℓ_b (let (x_b : ty_b) ...) (st_b ...)) st_0)
         ;; allocate space for block svariables in memory:
         (where (vmap_b tmap_b H_1) (alloc-variables srs H ((x_b : ty_b) ...)))
         ;; create new stack frame for block
-        ;; FIXME substitute a fresh lifetime for l_b
-        (where sf_b (l_b (st_b ...)))
+        ;; FIXME substitute a fresh lifetime for ℓ_b
+        (where sf_b (ℓ_b (st_b ...)))
         ]
 
    ;; Push a call.
    [--> ((srs fns) H V T S)
         ((srs fns) H_2 [vmap_a vmap ...] [tmap_a tmap ...]
-         [(lX (bk_f)) (l_1 [st_r ...]) sf_r ...])
+         [(lX (bk_f)) (ℓ_1 [st_r ...]) sf_r ...])
 
         ;; unpack V and T for later expansion
         (where ([vmap ...] [tmap ...]) (V T))
         ;; unpack the stack frames:
-        (where [(l_1 sts_1) sf_r ...] S)
+        (where [(ℓ_1 sts_1) sf_r ...] S)
         ;; unpack the statements sts_1 from top-most activation:
-        (where ((call g ls_a lvs_a) st_r ...) sts_1)
+        (where ((call g ℓs_a lvs_a) st_r ...) sts_1)
         ;; determine the types of the actual args to be passed:
         (where tys_a ,(map (λ (lv) (term (lvtype srs T ,lv)))
                            (term lvs_a)))
@@ -915,8 +915,8 @@
         ;; determine where lvalues are found in memory
         (where αs_a ,(map (λ (lv) (term (lvaddr srs H V T ,lv)))
                               (term lvs_a)))
-        ;; lookup the fun def'n (FIXME s/ls_f/ls_a/):
-        (where (fun g ls_f ((x_f : ty_f) ...) bk_f) (fun-defn fns g))
+        ;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
+        (where (fun g ℓs_f ((x_f : ty_f) ...) bk_f) (fun-defn fns g))
         ;; allocate space for parameters in memory:
         (where (vmap_a tmap_a H_1) (alloc-variables srs H ((x_f : ty_f) ...)))
         ;; determine addresses for each formal argument:
