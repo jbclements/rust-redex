@@ -14,10 +14,11 @@
   (fns (fn ...))
   (fn (fun g ls ((x : ty) ...) bk))
   ;; blocks:
-  (bk (block l (let (x : ty) ...) (st ...)))
+  (bk (block l (let (x : ty) ...) sts))
   ;; statements:
+  [sts (st ...)]
   (st (lv = rv)
-      (call g (l ...) (cm x) ...)
+      (call g ls lvs)
       bk)
   ;; lvalues :
   ;; changing "field names" to be numbers
@@ -60,25 +61,20 @@
 
 (define-extended-language Patina-machine Patina
   ;; a configuration of the machine
-  [C (prog H S)]
+  [C (prog H V T S)]
   ;; H (heap) : maps addresses to heap values
   [H ((alpha hv) ...)]
   ;; hv (heap values)
   [hv (ptr alpha) (int number) void]
-  ;; S (stack) : a stack of stack-frames
-  [S (sf ...)]
-  ;; sf (stack frame)
-  [sf (V T B)]
   ;; V: maps variable names to addresses
   [V (vmap ...)]
   [vmap ((x alpha) ...)]
   ;; T : a map from names to types
   [T (tmap ...)]
   [tmap ((x ty) ...)]
-  ;; ba (block activation) : a label and a list of statements
-  [B (ba ...)]
-  [ba (l sts)]
-  [sts (st ...)]
+  ;; S (stack) : stack-frames contain pending statements
+  [S (sf ...)]
+  [sf (l sts)]
   [(alphas betas gammas) (number ...)]
   [(alpha beta gamma) number]
   ;; z -- sizes, offsets
@@ -87,8 +83,15 @@
 
 ;; unit test setup for helper fns
 
-(define test-fns
-  (term []))
+(define test-main
+  (term (fun main [a] [(outp : (& a mut int))]
+             (block l0 (let) [((* outp) = 22)]))))
+
+(check-not-false (redex-match Patina-machine fn test-main))
+
+(define test-fns (term [,test-main]))
+
+(check-not-false (redex-match Patina-machine fns test-fns))
 
 (define test-srs
   (term [(struct A () (int))
@@ -101,8 +104,12 @@
                          (struct-ty B (l0))))
          ]))
 
+(check-not-false (redex-match Patina-machine srs test-srs))
+
 (define test-prog
   (term (,test-srs ,test-fns)))
+
+(check-not-false (redex-match Patina-machine prog test-prog))
 
 (define test-T (term (((i int)
                        (p (~ int)))
@@ -111,6 +118,8 @@
                        (c (struct-ty C (static)))
                        (q (& b1 imm int))
                        (r (~ int))))))
+
+(check-not-false (redex-match Patina-machine T test-T))
 
 (define test-V (term (((i 10)
                        (p 11))
@@ -134,6 +143,22 @@
                       (97 (int 28))   ;; *c:1:1
                       (98 (int 29))   ;; *b:1
                       (99 (int 30))])) ;; *p
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; initial -- the initial state of the machine
+
+(define initial-H (term [(0 (int 0))       ;; static value for result code
+                         (1 (ptr 0))]))    ;; pointer to result code
+(check-not-false (redex-match Patina-machine H initial-H))
+
+(define initial-V (term [[(resultp 1)]]))
+(check-not-false (redex-match Patina-machine V initial-V))
+
+(define initial-T (term [[(resultp (& l0 mut int))]]))
+(check-not-false (redex-match Patina-machine T initial-T))
+
+(define initial-S (term [(l0 [(call main (l0) (resultp))])]))
+(check-not-false (redex-match Patina-machine S initial-S))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
@@ -203,6 +228,22 @@
 
 (test-equal (term (deref [(1 (ptr 22))] 1)) (term (ptr 22)))
 (test-equal (term (deref [(2 (ptr 23)) (1 (int 22))] 1)) (term (int 22)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; fun-defn -- 
+
+(define-metafunction Patina-machine
+  fun-defn : fns g -> fn
+  
+  [(fun-defn (fn_0 fn_1 ...) g)
+   fn_0
+   (where (fun g ls ((x : ty) ...) bk) fn_0)]
+
+  [(fun-defn (fn_0 fn_1 ...) g)
+   (fun-defn (fn_1 ...) g)])
+
+(test-equal (term (fun-defn ,test-fns main))
+            (term ,test-main))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; update -- replaces value for alpha
@@ -406,7 +447,7 @@
   struct-tys : srs s ls -> (ty ...)
   
   [(struct-tys ((struct s_0 (l_0 ...) (ty_0 ...)) sr ...) s_0 ls_1)
-   (ty_0 ...)] ;; XXX subst lifetimes
+   (ty_0 ...)] ;; FIXME subst lifetimes
 
   [(struct-tys ((struct s_0 (l_0 ...) (ty_0 ...)) sr ...) s_1 ls_1)
    (struct-tys (sr ...) s_1 ls_1)])
@@ -554,19 +595,22 @@
 (test-equal (cadr (term (malloc () 2))) 0)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rveval -- evaluate an rvalue and store it into the heap at address alpha
+;; movemany -- like memmove but for a series of regions
 
 (define-metafunction Patina-machine
-  movefields : H zs alphas betas -> H
+  movemany : H zs alphas betas -> H
 
-  [(movefields H () () ())
+  [(movemany H () () ())
    H]
 
-  [(movefields H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
-   (movefields (memmove H alpha_0 beta_0 z_0)
-               (z_1 ...)
-               (alpha_1 ...)
-               (beta_1 ...))])
+  [(movemany H (z_0 z_1 ...) (alpha_0 alpha_1 ...) (beta_0 beta_1 ...))
+   (movemany (memmove H alpha_0 beta_0 z_0)
+             (z_1 ...)
+             (alpha_1 ...)
+             (beta_1 ...))])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; rveval -- evaluate an rvalue and store it into the heap at address alpha
 
 (define-metafunction Patina-machine
   rveval : srs H V T alpha rv -> H
@@ -591,7 +635,7 @@
    (where H_1 (update H alpha (ptr beta)))]
 
   [(rveval srs H V T alpha (struct s ls lvs))
-   (movefields H zs_0 betas alphas)
+   (movemany H zs_0 betas alphas)
 
    ;; types of each field:
    (where tys (struct-tys srs s ls))
@@ -812,99 +856,152 @@
   (reduction-relation
    Patina-machine
    
-   ;; No more blocks in the current frame. Pop it.
-   [--> (prog H ((() () ()) sf ...))
-        (prog H (sf ...))]
-   
-   ;; Block with no more statements. Free variables.
-   [--> ((srs fns) H (((vmap_0 vmap_1 ...)
-                       (tmap_0 tmap_1 ...)
-                       ((l ()) ba_1 ...))
-                      sf ...))
-        ((srs fns) H_1 (((vmap_1 ...)
-                         (tmap_1 ...)
-                         (ba_1 ...))
-                        sf ...))
+   ;; Stack frame with no more statements. Free variables.
+   [--> ((srs fns) H [vmap_0 vmap_1 ...] [tmap_0 tmap_1 ...]
+         [(l ()) sf_1 ...])
+        ((srs fns) H_1 [vmap_1 ...] [tmap_1 ...] [sf_1 ...])
         (where H_1 (free-variables srs H vmap_0 tmap_0))]
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
    ;; though not always init'd.
-   [--> ((srs fns) H ((V T (l ((lv = rv) st ...))) sf ...))
-        ((srs fns) H_1 ((V T (l (st ...))) sf ...))
+   [--> ((srs fns) H V T [(l ((lv = rv) st ...)) sf ...])
+        ((srs fns) H_1 V T [(l (st ...)) sf ...])
         (where alpha (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T alpha rv))]
 
    ;; Push a new block.
-   [--> ((srs fns) H S)
-        ((srs fns)
-         H_1 
-         (((vmap_0 vmap ...)
-           (tmap_0 tmap ...)
-           (ba_0 (l_1 (st_1 ...)) ba_2 ...))
-          sf_1 ...))
+   [--> ((srs fns) H (vmap ...) (tmap ...)
+         [sf_1 sf_2 ...])
+        ((srs fns) H_1  [vmap_b vmap ...] [tmap_b tmap ...]
+         [sf_b (l_1 [st_1 ...]) sf_2 ...])
 
+        ;; unpack the top-most stack frame sf_1:
+        (where (l_1 [st_0 st_1 ...]) sf_1)
+        ;; unpack the next statement st_0, which should be a block:
+        (where (block l_b (let (x_b : ty_b) ...) (st_b ...)) st_0)
+        ;; allocate space for block svariables in memory:
+        (where (vmap_b tmap_b H_1) (alloc-variables srs H ((x_b : ty_b) ...)))
+        ;; create new stack frame for block
+        ;; FIXME substitute a fresh lifetime for l_b
+        (where sf_b (l_b (st_b ...)))
+        ]
+
+   ;; Push a call.
+   [--> ((srs fns) H V T S)
+        ((srs fns) H_2 [vmap_a vmap ...] [tmap_a tmap ...]
+         [(lX (bk_f)) (l_1 [st_r ...]) sf_r ...])
+
+        ;; unpack V and T for later expansion
+        (where ([vmap ...] [tmap ...]) (V T))
         ;; unpack the stack frames:
-        (where (sf_0 sf_1 ...) S)
-
-        ;; unpack the top-most stack frame sf_0:
-        (where ((vmap ...) (tmap ...) (ba_1 ba_2 ...)) sf_0)
-
-        ;; unpack the top-most block activation ba_1:
-        (where (l_1 sts_1) ba_1)
-
+        (where [(l_1 sts_1) sf_r ...] S)
         ;; unpack the statements sts_1 from top-most activation:
-        (where ((block l_0 (let (x_0 : ty_0) ...) (st_0 ...)) st_1 ...) sts_1)
-
-        ;; allocate space for variables in memory:
-        (where (vmap_0 tmap_0 H_1) (alloc-variables srs H ((x_0 : ty_0) ...)))
-
-        ;; create new block to push to top of block activation stack:
-        ;; FIXME substitute a fresh lifetime for l_0?
-        (where ba_0 (l_0 (st_0 ...)))
+        (where ((call g ls_a lvs_a) st_r ...) sts_1)
+        ;; determine the types of the actual args to be passed:
+        (where tys_a ,(map (lambda (lv) (term (lvtype srs T ,lv)))
+                           (term lvs_a)))
+        ;; determine sizes of those types
+        (where zs_a ,(map (lambda (ty) (term (sizeof srs ,ty)))
+                          (term tys_a)))
+        ;; determine where lvalues are found in memory
+        (where alphas_a ,(map (lambda (lv) (term (lvaddr srs H V T ,lv)))
+                              (term lvs_a)))
+        ;; lookup the fun def'n (FIXME s/ls_f/ls_a/):
+        (where (fun g ls_f ((x_f : ty_f) ...) bk_f) (fun-defn fns g))
+        ;; allocate space for parameters in memory:
+        (where (vmap_a tmap_a H_1) (alloc-variables srs H ((x_f : ty_f) ...)))
+        ;; determine addresses for each formal argument:
+        (where betas_f ,(map (lambda (lv) (term (lvaddr srs H_1
+                                                        (vmap_a) (tmap_a)
+                                                        ,lv)))
+                             (term (x_f ...))))
+        ;; move from actual params into formal params:
+        (where H_2 (movemany H_1 zs_a betas_f alphas_a))
         ]
    ))
 
-;; test stepping where top-most stack frame has no remaining blocks
+;; test stepping where top-most stack frame has no remaining statements
 (test--> machine-step
-         (term (,test-prog () ((() () ()))))
-         (term (,test-prog () ())))
+         (term (,test-prog () (()) (()) ((l0 ()))))
+         (term (,test-prog () () () ())))
 
-;; test stepping where top-most stack frame has no remaining blocks and
-;; there is another stack frame beneath
-(test--> machine-step
-         (term (,test-prog () ((() () ())
-                               (,test-V ,test-T ()))))
-         (term (,test-prog () ((,test-V ,test-T ())))))
-
-;; test stepping freeing a block with `i` and `p`
-(test--> machine-step
-         (term (,test-prog ,test-H ((,test-V ,test-T ((l0 ()) (l1 ()))))))
-         (term (,test-prog
-                ((12 (int 23)) (13 (int 24)) (14 (ptr 98)) (15 (int 25))
-                 (16 (int 26)) (17 (ptr 97)) (18 (ptr 98)) (19 (ptr 96))
-                 (96 (int 27)) (97 (int 28)) (98 (int 29)))
-                ((,(cdr test-V) ,(cdr test-T) ((l1 ())))))))
-
-;; test popping an empty block
-(test--> machine-step
-         (term (,test-prog () (((()) (()) ((l0 ()))))))
-         (term (,test-prog () ((() () ())))))
-
-;; test pushing a new block
+;; test popping off a stack frame with vars and another frame beneath
 (test--> machine-step
          (term (,test-prog
-                ()     ;; empty heap to start
-                (((()) ;; empty vmap to start
-                  (()) ;; empty vmap to start
-                  ((l0 ((block l1 (let (i : int)
-                                    (j : (~ int))) ((i = 2)
-                                                    (j = (new i)))))))))))
+                [(0 (int 22)) (1 (int 23))]
+                [[(j 1)] [(i 0)]]
+                [[(j int)] [(i int)]]
+                [(l0 []) (l1 [])]))
+         (term (,test-prog
+                [(0 (int 22))]
+                [[(i 0)]]
+                [[(i int)]]
+                [(l1 [])])))
+
+;;;; test pushing a new block
+(test--> machine-step
+         (term (,test-prog
+                [(0 (int 22))]
+                [[(a 0)]]
+                [[(a int)]]
+                [(l1 [(block l2 (let (b : int) (c : (~ int)))
+                             ((i = 2) (j = (new i))))])]))
           (term (,test-prog
-                 ((1 void) (0 void))
-                 (((((i 0) (j 1))
-                    ())
-                   (((i int) (j (~ int)))
-                    ())
-                   ((l1 ((i = 2) (j = (new i))))
-                    (l0 ())))))))
+                 [(2 void) (1 void) (0 (int 22))]
+                 [[(b 1) (c 2)] [(a 0)]]
+                 [[(b int) (c (~ int))] [(a int)]]
+                 [(l2 [(i = 2) (j = (new i))])
+                  (l1 [])])))
 
+;; test a series of state steps, starting from the initial state.
+;; This tests:
+;; - function calls
+;; - block activation
+;; - assignment (through a pointer)
+;; - popping
+
+(define state-0
+  (term (,test-prog ,initial-H ,initial-V ,initial-T ,initial-S)))
+(check-not-false (redex-match Patina-machine C state-0))
+
+(define state-1
+  (term (,test-prog
+         [(2 (ptr 0)) (0 (int 0)) (1 void)]
+         [[(outp 2)] [(resultp 1)]]
+         [[(outp (& a mut int))] [(resultp (& l0 mut int))]]
+         [(lX [(block l0 (let) (((* outp) = 22)))])
+          (l0 [])])))
+(check-not-false (redex-match Patina-machine C state-1))
+
+(define state-2
+  (term (,test-prog
+         [(2 (ptr 0)) (0 (int 0)) (1 void)]
+         [[] [(outp 2)] [(resultp 1)]]
+         [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
+         [(l0 [((* outp) = 22)])
+          (lX [])
+          (l0 [])])))
+(check-not-false (redex-match Patina-machine C state-2))
+
+(define state-3
+  (term (,test-prog
+         [(2 (ptr 0)) (0 (int 22)) (1 void)]
+         [[] [(outp 2)] [(resultp 1)]]
+         [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
+         [(l0 [])
+          (lX [])
+          (l0 [])])))
+(check-not-false (redex-match Patina-machine C state-3))
+
+(define state-N
+  (term (,test-prog
+         [(0 (int 22))]
+         []
+         []
+         [])))
+(check-not-false (redex-match Patina-machine C state-N))
+
+(test--> machine-step state-0 state-1)
+(test--> machine-step state-1 state-2)
+(test--> machine-step state-2 state-3)
+(test-->> machine-step state-0 state-N)
