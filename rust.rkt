@@ -1,4 +1,12 @@
 ;; -*- coding: utf-8; -*-
+
+;; Cheat sheet for unicode, using M-x set-input-method as TeX:
+;; \alpha -> α
+;; \beta  -> β
+;; \gamma -> γ
+;; \cdot  -> ·
+;; \ell   -> ℓ
+
 #lang racket
 
 (require redex
@@ -24,7 +32,7 @@
   ;; lvalues :
   ;; changing "field names" to be numbers
   (lvs (lv ...))
-  (lv x (lv : f) (* lv))
+  (lv x (lv · f) (* lv))
   ;; rvalues :
   (rv (cm lv)                      ;; copy lvalue
       (& l mq lv)             ;; take address of lvalue
@@ -545,13 +553,13 @@
   [(lvtype srs T (* lv))
    (dereftype (lvtype srs T lv))]
   
-  [(lvtype srs T (lv : f))
+  [(lvtype srs T (lv · f))
    (fieldtype srs (lvtype srs T lv) f)])
 
 (test-equal (term (lvtype ,test-srs ,test-T (* p))) (term int))
 
 ;; FIXME --> l0 should be static
-(test-equal (term (lvtype ,test-srs ,test-T (c : 1))) (term (struct-ty B (l0))))
+(test-equal (term (lvtype ,test-srs ,test-T (c · 1))) (term (struct-ty B (l0))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvaddr -- lookup addr of variable in V
@@ -566,18 +574,18 @@
    α
    (where (ptr α) (deref H (lvaddr srs H V T lv)))]
        
-  [(lvaddr srs H V T (lv : f))
+  [(lvaddr srs H V T (lv · f))
    ,(+ (term (lvaddr srs H V T lv))
        (term (offsetof srs s ls f)))
    (where (struct-ty s ls) (lvtype srs T lv))])
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c : 1)))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c · 1)))
             (term 16))
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T ((c : 1) : 1)))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T ((c · 1) · 1)))
             (term 17))
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c : 1) : 1))))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c · 1) · 1))))
             (term 97))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -730,7 +738,7 @@
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs ,test-H ,test-V ,test-T
                                     (vaddr ,test-V q)
-                                    (& mq imm (* ((c : 1) : 1))))
+                                    (& mq imm (* ((c · 1) · 1))))
                             ,test-V
                             ,test-T
                             q))
