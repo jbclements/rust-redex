@@ -48,7 +48,7 @@
   (mode (ref mq) move)
   ;; types : 
   (tys (ty ...))
-  (ty (struct-ty s ℓs)             ;; s<'ℓ...>
+  (ty (struct s ℓs)             ;; s<'ℓ...>
       (~ ty)                       ;; ~t
       (& ℓ mq ty)                  ;; &'ℓ mq t
       int
@@ -101,21 +101,21 @@
 (define test-srs
   (term [(struct A () (int))
          (struct B (l0) (int (& l0 mut int)))
-         (struct C (l0) ((struct-ty A ())
-                         (struct-ty B (l0))))
-         (struct D (l0) ((struct-ty C (l0))
-                         (struct-ty A ())
-                         (struct-ty C (l0))
-                         (struct-ty B (l0))))
+         (struct C (l0) ((struct A ())
+                         (struct B (l0))))
+         (struct D (l0) ((struct C (l0))
+                         (struct A ())
+                         (struct C (l0))
+                         (struct B (l0))))
          ]))
 
 (check-not-false (redex-match Patina-machine srs test-srs))
 
 (define test-T (term (((i int)
                        (p (~ int)))
-                      ((a (struct-ty A ()))
-                       (b (struct-ty B (static)))
-                       (c (struct-ty C (static)))
+                      ((a (struct A ()))
+                       (b (struct B (static)))
+                       (c (struct C (static)))
                        (q (& b1 imm int))
                        (r (~ int))
                        (s (Option (~ int)))))))
@@ -170,16 +170,16 @@
 
 (define sum-srs
   (term [(struct List () (int
-                          (Option (~ (struct-ty List [])))))]))
+                          (Option (~ (struct List [])))))]))
 (check-not-false (redex-match Patina-machine srs sum-srs))
 
 (define sum-main
   (term (fun main [a] [(outp : (& a mut int))]
              (block l0 (let (i : int)
-                         (n : (Option (~ (struct-ty List []))))
-                         (s : (struct-ty List []))
-                         (l : (~ (struct-ty List [])))
-                         (p : (& l0 imm (struct-ty List []))))
+                         (n : (Option (~ (struct List []))))
+                         (s : (struct List []))
+                         (l : (~ (struct List [])))
+                         (p : (& l0 imm (struct List []))))
                     [(i = 22)
                      (n = None)
                      (s = (struct List [] (i n)))
@@ -210,13 +210,13 @@
 ;;     }
 ;; }
 (define sum-sum_list
-  (term (fun sum_list [a b] [(inp : (& a imm (struct-ty List [])))
+  (term (fun sum_list [a b] [(inp : (& a imm (struct List [])))
                              (outp : (& b mut int))]
              (block l0 (let (r : int))
                     [(r = (copy ((* inp) · 0)))
                      (match ((* inp) · 1)
                        (Some (ref imm) next1 =>
-                             (block l1 (let (next2 : (& l1 imm (struct-ty List [])))
+                             (block l1 (let (next2 : (& l1 imm (struct List [])))
                                          (b : int))
                                     [(next2 = (& l1 imm (* (* next1))))
                                      (b = 0)
@@ -538,21 +538,21 @@
 
 (test-equal (term (vtype ,test-T i)) (term int))
 
-(test-equal (term (vtype ,test-T c)) (term (struct-ty C (static))))
+(test-equal (term (vtype ,test-T c)) (term (struct C (static))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; struct-tys
+;; structs
 
 (define-metafunction Patina-machine
-  struct-tys : srs s ℓs -> (ty ...)
+  structs : srs s ℓs -> (ty ...)
   
-  [(struct-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 ℓs_1)
+  [(structs ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 ℓs_1)
    (ty_0 ...)] ;; FIXME subst lifetimes
 
-  [(struct-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_1 ℓs_1)
-   (struct-tys (sr ...) s_1 ℓs_1)])
+  [(structs ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_1 ℓs_1)
+   (structs (sr ...) s_1 ℓs_1)])
 
-(test-equal (term (struct-tys ,test-srs A ()))
+(test-equal (term (structs ,test-srs A ()))
             (term (int)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -570,25 +570,25 @@
   [(sizeof srs (& ℓ mq ty))
    1]
   
-  [(sizeof srs (struct-ty s ℓs))
+  [(sizeof srs (struct s ℓs))
    ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
-                    (term (struct-tys srs s ℓs))))]
+                    (term (structs srs s ℓs))))]
 
   [(sizeof srs (Option ty))
    ,(add1 (term (sizeof srs ty)))]
 
   )
 
-(test-equal (term (sizeof ,test-srs (struct-ty A ())))
+(test-equal (term (sizeof ,test-srs (struct A ())))
             (term 1))
 
-(test-equal (term (sizeof ,test-srs (struct-ty B (static))))
+(test-equal (term (sizeof ,test-srs (struct B (static))))
             (term 2))
 
-(test-equal (term (sizeof ,test-srs (struct-ty C (static))))
+(test-equal (term (sizeof ,test-srs (struct C (static))))
             (term 3))
 
-(test-equal (term (sizeof ,test-srs (Option (struct-ty C (static)))))
+(test-equal (term (sizeof ,test-srs (Option (struct C (static)))))
             (term 4))
 
 ;; offsets -- determines the offsets of each field of a struct
@@ -598,7 +598,7 @@
   
   [(offsets srs s ℓs)
    (0 z ...)
-   (where tys (struct-tys srs s ℓs))
+   (where tys (structs srs s ℓs))
    (where (z ...) ,(drop-right (map (λ (t) (term (sizeof srs ,t)))
                                     (term tys)) 1))])
 
@@ -613,7 +613,7 @@
   
   [(offsetof srs s ℓs f)
    ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
-                    (take (term (struct-tys srs s ℓs))
+                    (take (term (structs srs s ℓs))
                           (term f))))])
 
 (test-equal (term (offsetof ,test-srs C (static) 0))
@@ -640,8 +640,8 @@
 (define-metafunction Patina-machine
   fieldtype : srs ty f -> ty
   
-  [(fieldtype srs (struct-ty s ℓs) f)
-   ,(car (drop (term (struct-tys srs s ℓs)) (term f)))]) ; fixme--surely a better way
+  [(fieldtype srs (struct s ℓs) f)
+   ,(car (drop (term (structs srs s ℓs)) (term f)))]) ; fixme--surely a better way
 
 (define-metafunction Patina-machine
   lvtype : srs T lv -> ty
@@ -658,7 +658,7 @@
 (test-equal (term (lvtype ,test-srs ,test-T (* p))) (term int))
 
 ;; FIXME --> l0 should be static
-(test-equal (term (lvtype ,test-srs ,test-T (c · 1))) (term (struct-ty B (l0))))
+(test-equal (term (lvtype ,test-srs ,test-T (c · 1))) (term (struct B (l0))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvaddr -- lookup addr of variable in V
@@ -676,7 +676,7 @@
   [(lvaddr srs H V T (lv · f))
    ,(+ (term (lvaddr srs H V T lv))
        (term (offsetof srs s ℓs f)))
-   (where (struct-ty s ℓs) (lvtype srs T lv))])
+   (where (struct s ℓs) (lvtype srs T lv))])
 
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (c · 1)))
             (term 16))
@@ -746,7 +746,7 @@
    (movemany H zs_0 βs αs)
 
    ;; types of each field:
-   (where tys (struct-tys srs s ℓs))
+   (where tys (structs srs s ℓs))
    ;; sizes of each field's type:
    (where zs_0 ,(map (λ (t) (term (sizeof srs ,t))) (term tys)))
    ;; offset of each field:
@@ -930,9 +930,9 @@
    (where H_1 (free srs H ty β))
    (where H_2 (shrink H_1 β z))]
 
-  [(free srs H (struct-ty s ℓs) α)
+  [(free srs H (struct s ℓs) α)
    (free-struct srs H α tys zs)
-   (where tys (struct-tys srs s ℓs))
+   (where tys (structs srs s ℓs))
    (where zs (offsets srs s ℓs))]
 
   [(free srs H (Option ty) α)
@@ -1016,9 +1016,9 @@
 (test-equal (term (alloc-variables ,test-srs
                                    ,test-H
                                    ((j : int)
-                                    (k : (struct-ty B (static))))))
+                                    (k : (struct B (static))))))
             (term (((j 100) (k 101))
-                   ((j int) (k (struct-ty B (static))))
+                   ((j int) (k (struct B (static))))
                    ,(append (term ((102 void) (101 void) (100 void)))
                             test-H))))
 
