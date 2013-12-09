@@ -28,6 +28,7 @@
   [sts (st ...)]
   (st (lv = rv)
       (call g ℓs lvs)
+      (match lv (Some mode x => bk) (None => bk))
       bk)
   ;; lvalues :
   ;; changing "field names" to be numbers
@@ -39,15 +40,19 @@
       (struct s ℓs (lv ...))       ;; struct constant
       (new lv)                     ;; allocate memory
       number                       ;; constant number
-      (+ lv lv)                    ;; sum
+      (lv + lv)                    ;; sum
+      (Some lv)
+      None
       )
   (cm copy move)
+  (mode (ref mq) move)
   ;; types : 
   (tys (ty ...))
   (ty (struct-ty s ℓs)             ;; s<'ℓ...>
       (~ ty)                       ;; ~t
       (& ℓ mq ty)                  ;; &'ℓ mq t
-      int)                         ;; int
+      int
+      (Option ty))
   ;; mq : mutability qualifier
   (mq mut imm)
   ;; variables
@@ -60,6 +65,7 @@
   (ℓ variable-not-otherwise-mentioned)
   ;; field "names"
   (f number)
+  (debug debug-me)
   )
 
 ;;;;
@@ -92,16 +98,6 @@
 
 ;; unit test setup for helper fns
 
-(define test-main
-  (term (fun main [a] [(outp : (& a mut int))]
-             (block l0 (let) [((* outp) = 22)]))))
-
-(check-not-false (redex-match Patina-machine fn test-main))
-
-(define test-fns (term [,test-main]))
-
-(check-not-false (redex-match Patina-machine fns test-fns))
-
 (define test-srs
   (term [(struct A () (int))
          (struct B (l0) (int (& l0 mut int)))
@@ -115,18 +111,14 @@
 
 (check-not-false (redex-match Patina-machine srs test-srs))
 
-(define test-prog
-  (term (,test-srs ,test-fns)))
-
-(check-not-false (redex-match Patina-machine prog test-prog))
-
 (define test-T (term (((i int)
                        (p (~ int)))
                       ((a (struct-ty A ()))
                        (b (struct-ty B (static)))
                        (c (struct-ty C (static)))
                        (q (& b1 imm int))
-                       (r (~ int))))))
+                       (r (~ int))
+                       (s (Option (~ int)))))))
 
 (check-not-false (redex-match Patina-machine T test-T))
 
@@ -136,7 +128,8 @@
                        (b 13)
                        (c 15)
                        (q 18)
-                       (r 19)))))
+                       (r 19)
+                       (s 20)))))
 
 (define test-H (term [(10 (int 22)) ;; i == 22
                       (11 (ptr 99)) ;; p == 99
@@ -148,10 +141,100 @@
                       (17 (ptr 97)) ;; c:1:1
                       (18 (ptr 98)) ;; q
                       (19 (ptr 96)) ;; r
-                      (96 (int 27))   ;; *c:1:1
-                      (97 (int 28))   ;; *c:1:1
-                      (98 (int 29))   ;; *b:1
-                      (99 (int 30))])) ;; *p
+                      (20 (int 1))  ;; s – discriminant
+                      (21 (ptr 95)) ;; s – payload
+                      (95 (int 31))   ;; *payload(s)
+                      (96 (int 30))   ;; *c:1:1
+                      (97 (int 29))   ;; *c:1:1
+                      (98 (int 28))   ;; *b:1
+                      (99 (int 27))])) ;; *p
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; simple test prog that assigns to the result pointer
+
+(define twentytwo-main
+  (term (fun main [a] [(outp : (& a mut int))]
+             (block l0 (let) [((* outp) = 22)]))))
+
+(check-not-false (redex-match Patina-machine fn twentytwo-main))
+
+(define twentytwo-fns (term [,twentytwo-main]))
+(check-not-false (redex-match Patina-machine fns twentytwo-fns))
+
+(define twentytwo-prog
+  (term (,test-srs ,twentytwo-fns)))
+(check-not-false (redex-match Patina-machine prog twentytwo-prog))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; test prog that creates a linked list and counts down
+
+(define sum-srs
+  (term [(struct List () (int
+                          (Option (~ (struct-ty List [])))))]))
+(check-not-false (redex-match Patina-machine srs sum-srs))
+
+(define sum-main
+  (term (fun main [a] [(outp : (& a mut int))]
+             (block l0 (let (i : int)
+                         (n : (Option (~ (struct-ty List []))))
+                         (s : (struct-ty List []))
+                         (l : (~ (struct-ty List [])))
+                         (p : (& l0 imm (struct-ty List []))))
+                    [(i = 22)
+                     (n = None)
+                     (s = (struct List [] (i n)))
+                     (l = (new s))
+                     (i = 44)
+                     (n = (Some l))
+                     (s = (struct List [] (i n)))
+                     (l = (new s))
+                     (p = (& l0 imm (* l)))
+                     (call sum_list [l0 a] [p outp])]))))
+(check-not-false (redex-match Patina-machine fn sum-main))
+
+;; fn sum_list(inp: &List, outp: &mut int) {
+;;     let r: int = inp.0;
+;;     match inp.1 {
+;;         Some(ref next1) => { // next1: &~List
+;;             let next2 = &**next1;
+;;             let b = 0;
+;;             {
+;;                 let c = &mut b;
+;;                 sum_list(next2, c);
+;;             }
+;;             *outp = r + b;
+;;         }
+;;         None => {
+;;             *outp = r + b;
+;;         }
+;;     }
+;; }
+(define sum-sum_list
+  (term (fun sum_list [a b] [(inp : (& a imm (struct-ty List [])))
+                             (outp : (& b mut int))]
+             (block l0 (let (r : int))
+                    [(r = (copy ((* inp) · 0)))
+                     (match ((* inp) · 1)
+                       (Some (ref imm) next1 =>
+                             (block l1 (let (next2 : (& l1 imm (struct-ty List [])))
+                                         (b : int))
+                                    [(next2 = (& l1 imm (* (* next1))))
+                                     (b = 0)
+                                     (block l2 (let (c : (& l1 mut int)))
+                                            [(c = (& l2 mut b))
+                                             (call sum_list [l1 l2] [next2 c])
+                                             ((* outp) = (r + b))])]))
+                       (None =>
+                             (block l2 (let)
+                                    [((* outp) = (copy r))])))]))))
+(check-not-false (redex-match Patina-machine fn sum-sum_list))
+
+(define sum-fns
+  (term (,sum-main ,sum-sum_list)))
+
+(define sum-prog
+  (term (,sum-srs ,sum-fns)))
+(check-not-false (redex-match Patina-machine prog sum-prog))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; initial -- the initial state of the machine
@@ -210,6 +293,14 @@
     values))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; reject – useful for debugging since it causes contract errors
+
+(define-metafunction Patina-machine
+  reject : debug -> number
+
+  [(reject debug) 0])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; prefix sum
 
 (define-metafunction Patina-machine
@@ -251,8 +342,8 @@
   [(fun-defn (fn_0 fn_1 ...) g)
    (fun-defn (fn_1 ...) g)])
 
-(test-equal (term (fun-defn ,test-fns main))
-            (term ,test-main))
+(test-equal (term (fun-defn ,twentytwo-fns main))
+            (term ,twentytwo-main))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; update -- replaces value for α
@@ -481,7 +572,12 @@
   
   [(sizeof srs (struct-ty s ℓs))
    ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
-                    (term (struct-tys srs s ℓs))))]) 
+                    (term (struct-tys srs s ℓs))))]
+
+  [(sizeof srs (Option ty))
+   ,(add1 (term (sizeof srs ty)))]
+
+  )
 
 (test-equal (term (sizeof ,test-srs (struct-ty A ())))
             (term 1))
@@ -492,16 +588,19 @@
 (test-equal (term (sizeof ,test-srs (struct-ty C (static))))
             (term 3))
 
+(test-equal (term (sizeof ,test-srs (Option (struct-ty C (static)))))
+            (term 4))
+
 ;; offsets -- determines the offsets of each field of a struct
 
 (define-metafunction Patina-machine
   offsets : srs s ℓs -> zs
   
   [(offsets srs s ℓs)
-   ,(append '(0) (term (prefix-sum 0 zs)))
+   (0 z ...)
    (where tys (struct-tys srs s ℓs))
-   (where zs ,(drop-right (map (λ (t) (term (sizeof srs ,t)))
-                               (term tys)) 1))])
+   (where (z ...) ,(drop-right (map (λ (t) (term (sizeof srs ,t)))
+                                    (term tys)) 1))])
 
 (test-equal (term (offsets ,test-srs C (static)))
             (term (0 1)))
@@ -596,7 +695,7 @@
 
   [(malloc H z)
    (H_1 β)
-   (where (α ...) ,(map car (term H)))
+   (where ((α hv) ...) H)
    (where β ,(add1 (apply max (term (-1 α ...)))))
    (where H_1 (extend H β z))])
 
@@ -669,14 +768,29 @@
   [(rveval srs H V T α number)
    (update H α (int number))]
    
-  [(rveval srs H V T α (+ lv_0 lv_1))
-   (update H α (int number_2))
+  [(rveval srs H V T α (lv_l + lv_r))
+   (update H α (int number_s))
 
+   (where α_l (lvaddr srs H V T lv_l))
+   (where α_r (lvaddr srs H V T lv_r))
+   (where (int number_l) (deref H α_l))
+   (where (int number_r) (deref H α_r))
+   (where number_s ,(+ (term number_l) (term number_r)))]
+
+  [(rveval srs H V T α (Some lv))
+   H_2
+
+   (where ty (lvtype srs T lv))
+   (where z (sizeof srs ty))
    (where β (lvaddr srs H V T lv))
-   (where γ (lvaddr srs H V T lv))
-   (where (int number_0) (deref H β))
-   (where (int number_1) (deref H γ))
-   (where number_2 ,(+ (term number_0) (term number_1)))])
+   (where α_p ,(add1 (term α)))
+   (where H_1 (memmove H α_p β z))
+   (where H_2 (update H_1 α (int 1)))]
+
+  [(rveval srs H V T α None)
+   (update H α (int 0))]
+
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvselect -- helper for writing tests, selects values for a portion
@@ -744,6 +858,45 @@
                             q))
             (term ((ptr 97))))
 
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V i)
+                                    (i + (* p)))
+                            ,test-V
+                            ,test-T
+                            i))
+            (term ((int 49))))
+
+;; test that `None` writes a 0 into the discriminant, leaves rest unchanged
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V s)
+                                    None)
+                            ,test-V
+                            ,test-T
+                            s))
+            (term ((int 0) (ptr 95))))
+
+;; test that `(Some p)` writes a 1 into the discriminant
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V s)
+                                    (Some p))
+                            ,test-V
+                            ,test-T
+                            s))
+            (term ((int 1) (ptr 99))))
+
+;; test that `(Some p)` deinitializes `p`
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V s)
+                                    (Some p))
+                            ,test-V
+                            ,test-T
+                            p))
+            (term (void)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; free -- frees the memory owned by `α` which has type `ty`
 ;;
@@ -775,11 +928,21 @@
    (where (ptr β) (deref H α))
    (where z (sizeof srs ty))
    (where H_1 (free srs H ty β))
-   (where H_2 (shrink H β z))]
+   (where H_2 (shrink H_1 β z))]
+
   [(free srs H (struct-ty s ℓs) α)
    (free-struct srs H α tys zs)
    (where tys (struct-tys srs s ℓs))
-   (where zs (offsets srs s ℓs))])
+   (where zs (offsets srs s ℓs))]
+
+  [(free srs H (Option ty) α)
+   H
+   (where (int 0) (deref H α))]
+
+  [(free srs H (Option ty) α)
+   (free srs H ty ,(add1 (term α)))
+   (where (int 1) (deref H α))]
+)
 
 (define-metafunction Patina-machine
   lvfree : srs H V T lv -> H
@@ -826,9 +989,9 @@
                                   ,(cadr test-T)))
             (term ((10 (int 22))
                    (11 (ptr 99))
-                   (97 (int 28))
-                   (98 (int 29))
-                   (99 (int 30)))))
+                   (97 (int 29))
+                   (98 (int 28))
+                   (99 (int 27)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; alloc-variables -- allocate space for variables upon entry to a block,
@@ -859,6 +1022,41 @@
                    ,(append (term ((102 void) (101 void) (100 void)))
                             test-H))))
 
+;; unwrap
+
+(define-metafunction Patina-machine
+  unwrap : srs H ℓ mode ty α -> (H ty α)
+  
+  [(unwrap srs H ℓ (ref mq) ty α)
+   (H_u ty_m α_m)
+   ;; type of variable `x_m`
+   (where ty_m (& ℓ mq ty))
+   ;; generate memory for `x_m`
+   (where (H_m α_m) (malloc H (sizeof srs ty_m)))
+   ;; update mem location with ptr to payload
+   (where H_u (update H_m α_m (ptr α)))]
+
+  [(unwrap srs H ℓ move ty α)
+   (H_u ty α_m)
+   ;; generate memory for `x_m`
+   (where (H_m α_m) (malloc H (sizeof srs ty)))
+   ;; move payload from α into α_m
+   (where H_u (memmove H_m α_m α (sizeof srs ty)))]
+  )
+
+(test-equal (term (unwrap ,test-srs ,test-H l1 (ref mut) (~ int)
+                          ,(add1 (term (vaddr ,test-V s)))))
+            (term (,(append (term [(100 (ptr 21))]) test-H)
+                   (& l1 mut (~ int))
+                   100)))
+
+(test-equal (term (unwrap ,test-srs ,test-H l1 move (~ int)
+                          ,(add1 (term (vaddr ,test-V s)))))
+            (term (,(append (term [(100 (ptr 95))])
+                            (term (deinit ,test-H 21 1)))
+                   (~ int)
+                   100)))
+
 ;; --> -- machine step from one configuration C to the next
 
 (define machine-step
@@ -873,10 +1071,52 @@
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
    ;; though not always init'd.
+   ;; FIXME – we need to free the old memory
    [--> ((srs fns) H V T [(ℓ ((lv = rv) st ...)) sf ...])
         ((srs fns) H_1 V T [(ℓ (st ...)) sf ...])
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
+
+   ;; Match, None case.
+   [--> ((srs fns) H V T [(ℓ [st_a st ...]) sf ...])
+        ((srs fns) H [() vmap ...] [() tmap ...] [(ℓ_m [bk_n]) (ℓ [st ...]) sf ...])
+        ;; st_a is some kind of match:
+        (where (match lv_d (Some mode x_d => bk_s) (None => bk_n)) st_a)
+        ;; the discriminant lies at address α_d:
+        (where α_d (lvaddr srs H V T lv_d))
+        ;; it is a None value:
+        (where (int 0) (deref H α_d))
+        ;; generate a fresh lifetime: (FIXME)
+        (where ℓ_m lmatch)
+        ;; unpack V and T
+        (where ([vmap ...] [tmap ...]) (V T))
+        ]
+
+   ;; Match, some case.
+   [--> ((srs fns) H V T [(ℓ [st_a st ...]) sf ...])
+        C_n
+        ;; st_a is a match:
+        (where (match lv_d (Some mode x_m => bk_s) (None => bk_n)) st_a)
+        ;; the discriminant lies at address α_d:
+        (where α_d (lvaddr srs H V T lv_d))
+        ;; the discriminant has Option type:
+        (where (Option ty) (lvtype srs T lv_d))
+        ;; it is a Some value:
+        (where (int 1) (deref H α_d))
+        ;; make a pointer to the payload:
+        (where α_v ,(add1 (term α_d)))
+        ;; generate a fresh lifetime: (FIXME)
+        (where ℓ_m lmatch)
+        ;; handle the ref/move into `x_m`:
+        (where (H_m ty_m α_m) (unwrap srs H ℓ_m mode ty α_v))
+        ;; create new entry for vmap/tmap
+        (where vmap_m [(x_m α_m)])
+        (where tmap_m [(x_m ty_m)])
+        ;; unpack V and T
+        (where ([vmap ...] [tmap ...]) (V T))
+        (where C_n ((srs fns) H_m [vmap_m vmap ...] [tmap_m tmap ...]
+         [(ℓ_m [bk_s]) (ℓ [st ...]) sf ...]))
+        ]
 
    ;; Push a new block.
    [--> ((srs fns) H (vmap ...) (tmap ...)
@@ -931,17 +1171,17 @@
 
 ;; test stepping where top-most stack frame has no remaining statements
 (test--> machine-step
-         (term (,test-prog () (()) (()) ((l0 ()))))
-         (term (,test-prog () () () ())))
+         (term (,twentytwo-prog () (()) (()) ((l0 ()))))
+         (term (,twentytwo-prog () () () ())))
 
 ;; test popping off a stack frame with vars and another frame beneath
 (test--> machine-step
-         (term (,test-prog
+         (term (,twentytwo-prog
                 [(0 (int 22)) (1 (int 23))]
                 [[(j 1)] [(i 0)]]
                 [[(j int)] [(i int)]]
                 [(l0 []) (l1 [])]))
-         (term (,test-prog
+         (term (,twentytwo-prog
                 [(0 (int 22))]
                 [[(i 0)]]
                 [[(i int)]]
@@ -949,13 +1189,13 @@
 
 ;;;; test pushing a new block
 (test--> machine-step
-         (term (,test-prog
+         (term (,twentytwo-prog
                 [(0 (int 22))]
                 [[(a 0)]]
                 [[(a int)]]
                 [(l1 [(block l2 (let (b : int) (c : (~ int)))
                              ((i = 2) (j = (new i))))])]))
-          (term (,test-prog
+          (term (,twentytwo-prog
                  [(2 void) (1 void) (0 (int 22))]
                  [[(b 1) (c 2)] [(a 0)]]
                  [[(b int) (c (~ int))] [(a int)]]
@@ -970,11 +1210,11 @@
 ;; - popping
 
 (define state-0
-  (term (,test-prog ,initial-H ,initial-V ,initial-T ,initial-S)))
+  (term (,twentytwo-prog ,initial-H ,initial-V ,initial-T ,initial-S)))
 (check-not-false (redex-match Patina-machine C state-0))
 
 (define state-1
-  (term (,test-prog
+  (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 0)) (1 void)]
          [[(outp 2)] [(resultp 1)]]
          [[(outp (& a mut int))] [(resultp (& l0 mut int))]]
@@ -983,7 +1223,7 @@
 (check-not-false (redex-match Patina-machine C state-1))
 
 (define state-2
-  (term (,test-prog
+  (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 0)) (1 void)]
          [[] [(outp 2)] [(resultp 1)]]
          [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
@@ -993,7 +1233,7 @@
 (check-not-false (redex-match Patina-machine C state-2))
 
 (define state-3
-  (term (,test-prog
+  (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 22)) (1 void)]
          [[] [(outp 2)] [(resultp 1)]]
          [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
@@ -1003,7 +1243,7 @@
 (check-not-false (redex-match Patina-machine C state-3))
 
 (define state-N
-  (term (,test-prog
+  (term (,twentytwo-prog
          [(0 (int 22))]
          []
          []
@@ -1014,3 +1254,16 @@
 (test--> machine-step state-1 state-2)
 (test--> machine-step state-2 state-3)
 (test-->> machine-step state-0 state-N)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; test summation example
+
+(define sum-state-0
+  (term (,sum-prog ,initial-H ,initial-V ,initial-T ,initial-S)))
+(check-not-false (redex-match Patina-machine C sum-state-0))
+
+(define sum-state-N
+  (term (,sum-prog [(0 (int 66))] [] [] [])))
+(check-not-false (redex-match Patina-machine C sum-state-N))
+
+(test-->> machine-step sum-state-0 sum-state-N)
