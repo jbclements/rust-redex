@@ -47,9 +47,10 @@
       (new lv)                     ;; allocate memory
       number                       ;; constant number
       (lv + lv)                    ;; sum
-      (Some lv)
-      None
-      (vec lv ...)
+      (Some lv)                    ;; create an Option with Some
+      None                         ;; create an Option with None
+      (vec lv ...)                 ;; create a fixed-length vector
+      (pack lv ty)                 ;; convert fixed-length to DST
       )
   (cm copy move)
   (mode (ref mq) move)
@@ -134,11 +135,14 @@
                        (q (& b1 imm int))
                        (r (~ int))
                        (s (Option (~ int)))
-                       (ints (vec int 3))
+                       (ints3 (vec int 3))
                        (i0 int)
                        (i1 int)
                        (i2 int)
-                       (i3 int)]]))
+                       (i3 int)
+                       (ints3p (& b1 imm (vec int 3)))
+                       (intsp (& b1 imm (vec int)))
+                       ]]))
 (check-not-false (redex-match Patina-machine T test-T))
 
 (define test-V (term (((i 10)
@@ -149,11 +153,13 @@
                        (q 18)
                        (r 19)
                        (s 20)
-                       (ints 22)
+                       (ints3 22)
                        (i0 25)
                        (i1 26)
                        (i2 27)
-                       (i3 28)))))
+                       (i3 28)
+                       (ints3p 29)
+                       (intsp 30)))))
 (check-not-false (redex-match Patina-machine V test-V))
 
 (define test-H (term [(10 (int 22)) ;; i == 22
@@ -168,13 +174,16 @@
                       (19 (ptr 96)) ;; r
                       (20 (int 1))  ;; s – discriminant
                       (21 (ptr 95)) ;; s – payload
-                      (22 (int 10)) ;; ints @ 0
-                      (23 (int 11)) ;; ints @ 1
-                      (24 (int 12)) ;; ints @ 2
+                      (22 (int 10)) ;; ints3 @ 0
+                      (23 (int 11)) ;; ints3 @ 1
+                      (24 (int 12)) ;; ints3 @ 2
                       (25 (int 0))  ;; i0
                       (26 (int 1))  ;; i1
                       (27 (int 2))  ;; i2
                       (28 (int 3))  ;; i3
+                      (29 (ptr 22)) ;; ints3p
+                      (30 (ptr 22)) ;; intsp ptr
+                      (31 (int 3))  ;; intsp dst
                       (95 (int 31))   ;; *payload(s)
                       (96 (int 30))   ;; *c:1:1
                       (97 (int 29))   ;; *c:1:1
@@ -587,10 +596,20 @@
    1]
   
   [(sizeof srs (~ ty))
-   1]
+   1
+   (side-condition (not (term (is-DST srs ty))))]
+  
+  [(sizeof srs (~ ty))
+   2
+   (side-condition (term (is-DST srs ty)))]
   
   [(sizeof srs (& ℓ mq ty))
-   1]
+   1
+   (side-condition (not (term (is-DST srs ty))))]
+  
+  [(sizeof srs (& ℓ mq ty))
+   2
+   (side-condition (term (is-DST srs ty)))]
   
   [(sizeof srs (struct s ℓs))
    (sum [(sizeof srs ty) ...])
@@ -618,6 +637,12 @@
 
 (test-equal (term (sizeof ,test-srs (vec int 3)))
             (term 3))
+
+(test-equal (term (sizeof ,test-srs (& b1 imm (vec int 3))))
+            (term 1))
+
+(test-equal (term (sizeof ,test-srs (& b1 imm (vec int))))
+            (term 2))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; sizeof-dst
@@ -888,6 +913,19 @@
 ;; lvaddr -- lookup addr of variable in V
 
 (define-metafunction Patina-machine
+  lvaddr-elem : srs H V T ty l lv lv -> z
+
+  [(lvaddr-elem srs H V T ty_e l_v lv_v lv_i)
+   (offset (lvaddr srs H V T lv_v) z_e)
+   (where α_i (lvaddr srs H V T lv_i))
+   (where (int l_i) (deref H α_i))
+   (where z_e ,(* (term l_i) (term (sizeof srs ty_e))))
+   (side-condition (>= (term l_i) 0))
+   (side-condition (< (term l_i) (term l_v)))]
+
+  )
+
+(define-metafunction Patina-machine
   lvaddr : srs H V T lv -> α
   
   [(lvaddr srs H V T x)
@@ -904,15 +942,14 @@
 
   ;; indexing into a fixed-length vector
   [(lvaddr srs H V T (lv_v @ lv_i))
-   (offset α_v z_e)
-   (where (vec ty_e l_v) (lvtype srs T lv_v))
-   (where α_v (lvaddr srs H V T lv_v))
-   (where α_i (lvaddr srs H V T lv_i))
-   (where (int l_i) (deref H α_i))
-   (where z_e ,(* (term l_i) (term (sizeof srs ty_e))))
-   (side-condition (>= (term l_i) 0))
-   (side-condition (< (term l_i) (term l_v)))
-   ]
+   (lvaddr-elem srs H V T ty_e l_v lv_v lv_i)
+   (where (vec ty_e l_v) (lvtype srs T lv_v))]
+
+  ;; indexing into a dynamically sized vector
+  [(lvaddr srs H V T (lv_v @ lv_i))
+   (lvaddr-elem srs H V T ty_e l_v lv_v lv_i)
+   (where (vec ty_e) (lvtype srs T lv_v))
+   (where (int l_v) (reified srs H V T lv_v))]
 
   )
 
@@ -925,11 +962,37 @@
 (test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (* ((c · 1) · 1))))
             (term 97))
 
-(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (ints @ i1)))
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (ints3 @ i1)))
             (term 23))
 
-;(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (ints @ i4)))
+;(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T (ints3 @ i4)))
 ;            (term 23))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; reified -- given a LV of DST type, identifies and returns the "reified"
+;; portion (i.e., the length). Must be behind the most recent pointer.
+
+(define-metafunction Patina-machine
+  reified : srs H V T lv -> hv
+
+  [(reified srs H V T (* lv))
+   (deref H (inc α))
+   (where α (lvaddr srs H V T lv))]
+
+  [(reified srs H V T (lv_o · f))
+   (reified srs H V T lv_o)]
+
+  [(reified srs H V T (lv_v @ lv_i))
+   (reified srs H V T lv_v)]
+
+  )
+
+(test-equal (term (reified ,test-srs ,test-H ,test-V ,test-T
+                           ((* intsp) @ i2)))
+            (term (int 3)))
+
+(test-equal (term (lvaddr ,test-srs ,test-H ,test-V ,test-T ((* intsp) @ i1)))
+            (term 23))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; malloc -- extend heap z contiguous addresses and retun starting address
@@ -960,6 +1023,29 @@
              (z_1 ...)
              (α_1 ...)
              (β_1 ...))])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; reify-pack -- extract out the static part of some type that is to be
+;; packed and reify into a heap value
+
+(define-metafunction Patina-machine
+  reify-pack : srs ty ty -> hv
+
+  [(reify-pack srs (vec ty l) (vec ty))
+   (int l)]
+
+  [(reify-pack srs (struct s_s ℓs_s) (struct s_d ℓs_d))
+   (reify-pack srs ty_s^z ty_d^z)
+   (where (ty_s^a ... ty_s^z) (field-tys srs s_s ℓs_s))
+   (where (ty_d^a ... ty_d^z) (field-tys srs s_d ℓs_d))]
+
+  )
+
+(test-equal (term (reify-pack ,test-dst-srs (vec int 22) (vec int)))
+            (term (int 22)))
+
+(test-equal (term (reify-pack ,test-dst-srs (struct RCDataInt3 []) (struct RCDataIntN [])))
+            (term (int 3)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rveval -- evaluate an rvalue and store it into the heap at address α
@@ -1055,6 +1141,36 @@
    (where [β_e ...] ((offset α z_o) ...))
    ;; move lvalues into their new homes
    (where H_1 (movemany H [z_e ...] [β_e ...] [α_e ...]))]
+
+  ;; pack from ~ty_s to ~ty_d where ty_d is DST
+  ;; (see nearly identical borrowed pointer rule below)
+  [(rveval srs H V T α (pack lv_s (~ ty_d)))
+   H_2
+
+   ;; move pointer value
+   (where α_s (lvaddr srs H V T lv_s))
+   (where H_1 (memmove H α α_s 1))
+
+   ;; reify component of type and store into heap at offset 1 of fat
+   ;; pointer
+   (where (~ ty_s)  (lvtype srs T lv))
+   (where hv (reify-pack srs ty_s ty_d))
+   (where H_2 (update H_1 (inc α) hv))]
+
+  ;; pack from &ty_s to &ty_d where ty_d is DST
+  ;; (see nearly identical owned pointer rule above)
+  [(rveval srs H V T α (pack lv_s (& ℓ mq ty_d)))
+   H_2
+
+   ;; move pointer value
+   (where α_s (lvaddr srs H V T lv_s))
+   (where H_1 (memmove H α α_s 1))
+
+   ;; reify component of type and store into heap at offset 1 of fat
+   ;; pointer
+   (where (& ℓ mq ty_s)  (lvtype srs T lv_s))
+   (where hv (reify-pack srs ty_s ty_d))
+   (where H_2 (update H_1 (inc α) hv))]
 
   )
 
@@ -1166,12 +1282,28 @@
 ;; test `(vec i1 i2 i3)`
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs ,test-H ,test-V ,test-T
-                                    (vaddr ,test-V ints)
+                                    (vaddr ,test-V ints3)
                                     (vec i1 i2 i3))
                             ,test-V
                             ,test-T
-                            ints))
+                            ints3))
             (term ((int 1) (int 2) (int 3))))
+
+;; test pack
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs
+                                    ;; clear out the initial value of intsp,
+                                    ;; then put it back
+                                    (lvdeinit ,test-srs ,test-H ,test-V ,test-T
+                                              intsp)
+                                    ,test-V
+                                    ,test-T
+                                    (vaddr ,test-V intsp)
+                                    (pack ints3p (& b1 imm (vec int))))
+                            ,test-V
+                            ,test-T
+                            intsp))
+            (term ((ptr 22) (int 3))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; free -- frees the memory owned by `α` which has type `ty`
