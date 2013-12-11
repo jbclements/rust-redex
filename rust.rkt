@@ -1023,13 +1023,16 @@
   [(rveval srs H V T α (vec))
    H]
 
-  [(rveval srs H V T α (vec lv_a lv_b ...))
-   H_2
+  [(rveval srs H V T α (vec lv ...))
+   H_1
 
+   (where [α_e ...] ((lvaddr srs H V T lv_e) ...))
+   (where (lv_a lv_b ...) lv_e)
    (where ty (lvtype srs T lv_a))
-   (where z (sizeof srs ty))
-   
-   ]
+   (where z_v (len [lv_a lv_b ...]))
+   (where [z_e ...] (vec-offsets srs ty z_v))
+   (where [β_e ...] ((offset α z_e) ...))
+   (where H_1 (movemany srs [z_e ...] [β_e ...] [α_e ...]))]
 
   )
 
