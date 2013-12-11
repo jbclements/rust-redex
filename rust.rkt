@@ -60,7 +60,7 @@
       (& ℓ mq ty)                  ;; &'ℓ mq t
       int
       (Option ty)
-      (vec ty z)
+      (vec ty l)
       (vec ty))
   ;; mq : mutability qualifier
   (mq mut imm)
@@ -77,6 +77,8 @@
   ;; z -- sizes, offsets
   [zs (z ...)]
   [z number]
+  ;; l -- vector lengths
+  [l number]
   ;; hack for debugging
   (debug debug-me)
   )
@@ -359,6 +361,18 @@
             (term 6))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; len
+
+(define-metafunction Patina-machine
+  len : [any ...] -> number
+  
+  [(len [any ...])
+   ,(length (term [any ...]))])
+
+(test-equal (term (len [1 2 3]))
+            (term 3))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; prefix sum
 
 (define-metafunction Patina-machine
@@ -537,7 +551,7 @@
   [(is-DST-1 [s ...] srs int) #false]
   [(is-DST-1 [s ...] srs (Option ty)) (is-DST-1 [s ...] srs ty)]
   [(is-DST-1 [s ...] srs (vec ty)) #true]
-  [(is-DST-1 [s ...] srs (vec ty z)) #false])
+  [(is-DST-1 [s ...] srs (vec ty l)) #false])
 
 (test-equal (term (is-DST ,test-dst-srs (~ (vec int))))
             #false)
@@ -582,8 +596,8 @@
    (sum [(sizeof srs ty) ...])
    (where [ty ...] (field-tys srs s ℓs))]
 
-  [(sizeof srs (vec ty z))
-   ,(* (term (sizeof srs ty)) (term z))]
+  [(sizeof srs (vec ty l))
+   ,(* (term (sizeof srs ty)) (term l))]
 
   [(sizeof srs (Option ty))
    ,(add1 (term (sizeof srs ty)))]
@@ -611,8 +625,8 @@
 (define-metafunction Patina-machine
   sizeof-dst : srs ty hv -> z
   
-  [(sizeof-dst srs (vec ty) (int z))
-   ,(* (term (sizeof srs ty)) (term z))]
+  [(sizeof-dst srs (vec ty) (int l))
+   ,(* (term (sizeof srs ty)) (term l))]
 
   [(sizeof-dst srs (struct s ℓs) hv)
    (sum [z_a z_z])
@@ -776,7 +790,7 @@
 ;; vec-offsets -- determines the offsets of each element of a vector
 
 (define-metafunction Patina-machine
-  vec-offsets : srs ty z -> zs
+  vec-offsets : srs ty l -> zs
 
   [(vec-offsets srs ty 0)
    []]
@@ -784,9 +798,9 @@
   [(vec-offsets srs ty 1)
    [0]]
   
-  [(vec-offsets srs ty z) ;; really, really inefficient. 
+  [(vec-offsets srs ty l) ;; really, really inefficient. 
    (z_a ... z_y (offset z_y (sizeof srs ty)))
-   (where [z_a ... z_y] (vec-offsets srs ty (dec z)))]
+   (where [z_a ... z_y] (vec-offsets srs ty (dec l)))]
 
   )
 
@@ -798,7 +812,7 @@
 ;; which is just the vector element type repeated N times
 
 (define-metafunction Patina-machine
-  vec-tys : srs ty z -> tys
+  vec-tys : srs ty l -> tys
 
   [(vec-tys srs ty 0)
    []]
@@ -806,9 +820,9 @@
   [(vec-tys srs ty 1)
    [ty]]
   
-  [(vec-tys srs ty z)
+  [(vec-tys srs ty l)
    (ty ty_a ...)
-   (where [ty_a ...] (vec-tys srs ty (dec z)))]
+   (where [ty_a ...] (vec-tys srs ty (dec l)))]
 
   )
 
@@ -891,13 +905,13 @@
   ;; indexing into a fixed-length vector
   [(lvaddr srs H V T (lv_v @ lv_i))
    (offset α_v z_e)
-   (where (vec ty_e z_v) (lvtype srs T lv_v))
+   (where (vec ty_e l_v) (lvtype srs T lv_v))
    (where α_v (lvaddr srs H V T lv_v))
    (where α_i (lvaddr srs H V T lv_i))
-   (where (int z_i) (deref H α_i))
-   (where z_e ,(* (term z_i) (term (sizeof srs ty_e))))
-   (side-condition (>= (term z_i) 0))
-   (side-condition (< (term z_i) (term z_v)))
+   (where (int l_i) (deref H α_i))
+   (where z_e ,(* (term l_i) (term (sizeof srs ty_e))))
+   (side-condition (>= (term l_i) 0))
+   (side-condition (< (term l_i) (term l_v)))
    ]
 
   )
@@ -1023,16 +1037,24 @@
   [(rveval srs H V T α (vec))
    H]
 
-  [(rveval srs H V T α (vec lv ...))
+  [(rveval srs H V T α (vec lv_e ...))
    H_1
 
-   (where [α_e ...] ((lvaddr srs H V T lv_e) ...))
-   (where (lv_a lv_b ...) lv_e)
+   ;; find addresses α_e of the inputs lv_e
+   (where [α_e ...] [(lvaddr srs H V T lv_e) ...])
+   ;; determine ty of vector from type of 1st lvalue
+   (where [lv_a lv_b ...] [lv_e ...])
    (where ty (lvtype srs T lv_a))
-   (where z_v (len [lv_a lv_b ...]))
-   (where [z_e ...] (vec-offsets srs ty z_v))
-   (where [β_e ...] ((offset α z_e) ...))
-   (where H_1 (movemany srs [z_e ...] [β_e ...] [α_e ...]))]
+   ;; length of vector comes from number of lvalues
+   (where l_v (len [lv_a lv_b ...]))
+   ;; find types/sizes of the elements (always the same for each element)
+   (where [ty_e ...] (vec-tys srs ty l_v))
+   (where [z_e ...] [(sizeof srs ty_e) ...])
+   ;; find addresses β_e of each element
+   (where [z_o ...] (vec-offsets srs ty l_v))
+   (where [β_e ...] ((offset α z_o) ...))
+   ;; move lvalues into their new homes
+   (where H_1 (movemany H [z_e ...] [β_e ...] [α_e ...]))]
 
   )
 
@@ -1141,6 +1163,16 @@
                             p))
             (term (void)))
 
+;; test `(vec i1 i2 i3)`
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs ,test-H ,test-V ,test-T
+                                    (vaddr ,test-V ints)
+                                    (vec i1 i2 i3))
+                            ,test-V
+                            ,test-T
+                            ints))
+            (term ((int 1) (int 2) (int 3))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; free -- frees the memory owned by `α` which has type `ty`
 ;;
@@ -1159,12 +1191,12 @@
   )
 
 (define-metafunction Patina-machine
-  free-vec : srs H α ty z -> H
+  free-vec : srs H α ty l -> H
 
-  [(free-vec srs H α ty z)
+  [(free-vec srs H α ty l)
    (free-at-offsets srs H α
-                    (vec-tys srs ty z)
-                    (vec-offsets srs ty z))]
+                    (vec-tys srs ty l)
+                    (vec-offsets srs ty l))]
 
   )
 
