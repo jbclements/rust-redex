@@ -773,6 +773,49 @@
             (term (0 1)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; vec-offsets -- determines the offsets of each element of a vector
+
+(define-metafunction Patina-machine
+  vec-offsets : srs ty z -> zs
+
+  [(vec-offsets srs ty 0)
+   []]
+  
+  [(vec-offsets srs ty 1)
+   [0]]
+  
+  [(vec-offsets srs ty z) ;; really, really inefficient. 
+   (z_a ... z_y (offset z_y (sizeof srs ty)))
+   (where [z_a ... z_y] (vec-offsets srs ty (dec z)))]
+
+  )
+
+(test-equal (term (vec-offsets ,test-srs int 3))
+            (term (0 1 2)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; vec-tys -- returns the types of each element in a vector,
+;; which is just the vector element type repeated N times
+
+(define-metafunction Patina-machine
+  vec-tys : srs ty z -> tys
+
+  [(vec-tys srs ty 0)
+   []]
+  
+  [(vec-tys srs ty 1)
+   [ty]]
+  
+  [(vec-tys srs ty z)
+   (ty ty_a ...)
+   (where [ty_a ...] (vec-tys srs ty (dec z)))]
+
+  )
+
+(test-equal (term (vec-tys ,test-srs int 3))
+            (term (int int int)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; offsetof
 
 (define-metafunction Patina-machine
@@ -977,6 +1020,17 @@
   [(rveval srs H V T α None)
    (update H α (int 0))]
 
+  [(rveval srs H V T α (vec))
+   H]
+
+  [(rveval srs H V T α (vec lv_a lv_b ...))
+   H_2
+
+   (where ty (lvtype srs T lv_a))
+   (where z (sizeof srs ty))
+   
+   ]
+
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1090,44 +1144,38 @@
 ;; Note that this does *not* free (or deinitialize) `α` itself!
 
 (define-metafunction Patina-machine
-  free-struct : srs H α (ty ...) (z ...) -> H
+  free-at-offsets : srs H α (ty ...) (z ...) -> H
 
-  [(free-struct srs H α () ())
+  [(free-at-offsets srs H α () ())
    H]
 
-  [(free-struct srs H α (ty_0 ty_1 ...) (z_0 z_1 ...))
-   (free-struct srs H_1 α (ty_1 ...) (z_1 ...))
+  [(free-at-offsets srs H α (ty_0 ty_1 ...) (z_0 z_1 ...))
+   (free-at-offsets srs H_1 α (ty_1 ...) (z_1 ...))
    (where H_1 (free srs H ty_0 (offset α z_0)))]
   
   )
 
 (define-metafunction Patina-machine
-  free-vec : srs H α ty z z -> H
+  free-vec : srs H α ty z -> H
 
-  [(free-vec srs H α ty z 0)
-   H]
+  [(free-vec srs H α ty z)
+   (free-at-offsets srs H α
+                    (vec-tys srs ty z)
+                    (vec-offsets srs ty z))]
 
-  [(free-vec srs H α ty z_t z_i)
-   (free-vec srs
-             (free srs H ty α)
-             (offset α z_t)
-             ty
-             z_t
-             (dec z_i))]
   )
 
 (define-metafunction Patina-machine
   free-dst : srs H ty α hv -> H
 
   [(free-dst srs H (vec ty) α (int z))
-   (free-vec srs H α ty z_t z)
-   (where z_t (sizeof srs ty))]
+   (free-vec srs H α ty z)]
 
   [(free-dst srs H (struct s ℓs) α)
    (free-dst srs H_1 ty_z (offset α z_z) hv)
    (where (ty_a ... ty_z) (field-tys srs s ℓs))
    (where (z_a ... z_z) (field-offsets srs s ℓs))
-   (where H_1 (free-struct srs H α (ty_a ...) (z_a ...)))]
+   (where H_1 (free-at-offsets srs H α (ty_a ...) (z_a ...)))]
 
   )
 
@@ -1142,8 +1190,7 @@
    H]
 
   [(free srs H (vec ty z) α)
-   (free-vec srs H α ty z_t z)
-   (where z_t (sizeof srs ty))]
+   (free-vec srs H α ty z)]
 
   [(free srs H (& ℓ mq ty) α) H]
 
@@ -1165,7 +1212,7 @@
    (side-condition (term (is-DST srs ty)))]
 
   [(free srs H (struct s ℓs) α)
-   (free-struct srs H α tys zs)
+   (free-at-offsets srs H α tys zs)
    (where tys (field-tys srs s ℓs))
    (where zs (field-offsets srs s ℓs))]
 
