@@ -50,6 +50,7 @@
       (Some lv)                    ;; create an Option with Some
       None                         ;; create an Option with None
       (vec lv ...)                 ;; create a fixed-length vector
+      (vec-len lv)                 ;; extract length of a vector
       (pack lv ty)                 ;; convert fixed-length to DST
       )
   (cm copy move)
@@ -192,10 +193,10 @@
 (check-not-false (redex-match Patina-machine H test-H))
 
 (define test-dst-srs
-  (term [(struct RCDataInt3 () [int [vec int 3]])
-         (struct RCInt3 () [(& static imm (struct RCDataInt3 []))])
-         (struct RCDataIntN () (int [vec int]))
-         (struct RCIntN () [(& static imm (struct RCDataIntN []))])
+  (term [(struct RCDataInt3 () [int (vec int 3)])
+         (struct RCInt3 (l0) [(& l0 imm (struct RCDataInt3 []))])
+         (struct RCDataIntN () (int (vec int)))
+         (struct RCIntN (l0) [(& l0 imm (struct RCDataIntN []))])
          (struct Cycle1 () [(Option (~ (struct Cycle []))) (vec int)])
          (struct Cycle2 () [(Option (~ (struct Cycle [])))])
          ]))
@@ -289,6 +290,51 @@
 (define sum-prog
   (term (,sum-srs ,sum-fns)))
 (check-not-false (redex-match Patina-machine prog sum-prog))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; test prog that creates an RC vector, casts it to DST, and then
+;; accesses it
+
+(define dst-srs
+  (term [(struct RCDataInt3 () [int (vec int 3)])
+         (struct RCInt3 (l0) [(& l0 imm (struct RCDataInt3 []))])
+         (struct RCDataIntN () (int (vec int)))
+         (struct RCIntN (l0) [(& l0 imm (struct RCDataIntN []))])
+         ]))
+
+;; gonna be super tedious...
+(define dst-main
+  (term (fun main [a] [(outp : (& a mut int))]
+             (block l0 [(i1 : int)
+                        (i2 : int)
+                        (i3 : int)
+                        (v : (vec int 3))
+                        (rd3 : (struct RCDataInt3 []))
+                        (rd3p : (& l0 imm (struct RCDataInt3 [])))
+                        (rdNp : (& l0 imm (struct RCDataIntN [])))
+                        ]
+                    [(i1 = 22)
+                     (i2 = 23)
+                     (i3 = 24)
+                     (v = (vec i1 i2 i3))
+                     (i1 = 1)
+                     (rd3 = (struct RCDataInt3 [] (i1 v)))
+                     (rd3p = (& l0 imm rd3))
+                     (rdNp = (pack rd3p (& l0 imm (struct RCDataIntN []))))
+                     (i1 = 0)
+                     (i2 = 0)
+                     (i2 = ((((* rdNp) · 1) @ i1) + i2))
+                     (i1 = 1)
+                     (i2 = ((((* rdNp) · 1) @ i1) + i2))
+                     (i1 = 2)
+                     (i2 = ((((* rdNp) · 1) @ i1) + i2))
+                     ((* outp) = (copy i2))
+                     ]))))
+(check-not-false (redex-match Patina-machine fn dst-main))
+
+(define dst-prog
+  (term (,dst-srs [,dst-main])))
+(check-not-false (redex-match Patina-machine prog dst-prog))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; initial -- the initial state of the machine
@@ -1070,7 +1116,18 @@
   [(rveval srs H V T α (& ℓ mq lv))
    H_1
    (where β (lvaddr srs H V T lv))
-   (where H_1 (update H α (ptr β)))]
+   (where ty (lvtype srs T lv))
+   (where H_1 (update H α (ptr β)))
+   (side-condition (not (term (is-DST srs ty))))]
+
+  [(rveval srs H V T α (& ℓ mq lv))
+   H_2
+   (where β (lvaddr srs H V T lv))
+   (where ty (lvtype srs T lv))
+   (where (int l) (reified srs H V T lv))
+   (where H_1 (update H α (ptr β)))
+   (where H_2 (update H_1 (inc α) (int l)))
+   (side-condition (term (is-DST srs ty)))]
 
   [(rveval srs H V T α (struct s ℓs lvs))
    (movemany H zs_0 βs αs)
@@ -1171,6 +1228,16 @@
    (where (& ℓ mq ty_s)  (lvtype srs T lv_s))
    (where hv (reify-pack srs ty_s ty_d))
    (where H_2 (update H_1 (inc α) hv))]
+
+  ;; len for non-DST
+  [(rveval srs H V T α (vec-len lv))
+   (update H α (int l))
+   (where (vec ty l) (lvtype srs T lv))]
+
+  ;; len for DST
+  [(rveval srs H V T α (vec-len lv))
+   (update H α (reified srs H V T lv))
+   (where (vec ty) (lvtype srs T lv))]
 
   )
 
@@ -1300,6 +1367,45 @@
                                     ,test-T
                                     (vaddr ,test-V intsp)
                                     (pack ints3p (& b1 imm (vec int))))
+                            ,test-V
+                            ,test-T
+                            intsp))
+            (term ((ptr 22) (int 3))))
+
+;; test len for non-DST
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs
+                                    ,test-H
+                                    ,test-V
+                                    ,test-T
+                                    (vaddr ,test-V i)
+                                    (vec-len ints3))
+                            ,test-V
+                            ,test-T
+                            i))
+            (term ((int 3))))
+
+;; test len for DST
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs
+                                    ,test-H
+                                    ,test-V
+                                    ,test-T
+                                    (vaddr ,test-V i)
+                                    (vec-len (* intsp)))
+                            ,test-V
+                            ,test-T
+                            i))
+            (term ((int 3))))
+
+;; test taking address of DST
+(test-equal (term (lvselect ,test-srs
+                            (rveval ,test-srs
+                                    ,test-H
+                                    ,test-V
+                                    ,test-T
+                                    (vaddr ,test-V intsp)
+                                    (& b1 imm (* intsp)))
                             ,test-V
                             ,test-T
                             intsp))
@@ -1717,3 +1823,17 @@
 (check-not-false (redex-match Patina-machine C sum-state-N))
 
 (test-->> machine-step sum-state-0 sum-state-N)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; test dst example
+
+(define dst-state-0
+  (term (,dst-prog ,initial-H ,initial-V ,initial-T ,initial-S)))
+(check-not-false (redex-match Patina-machine C dst-state-0))
+
+(define dst-state-N
+  (term (,dst-prog [(0 (int 69))] [] [] [])))
+(check-not-false (redex-match Patina-machine C dst-state-N))
+
+(test-->> machine-step dst-state-0 dst-state-N)
+
