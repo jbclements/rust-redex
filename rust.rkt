@@ -60,7 +60,8 @@
       (& ℓ mq ty)                  ;; &'ℓ mq t
       int
       (Option ty)
-      (vec ty z))
+      (vec ty z)
+      (vec ty))
   ;; mq : mutability qualifier
   (mq mut imm)
   ;; variables
@@ -178,6 +179,17 @@
                       (98 (int 28))   ;; *b:1
                       (99 (int 27))])) ;; *p
 (check-not-false (redex-match Patina-machine H test-H))
+
+(define test-dst-srs
+  (term [(struct RCDataInt3 () [int [vec int 3]])
+         (struct RCInt3 () [(& static imm (struct RCDataInt3 []))])
+         (struct RCDataIntN () (int [vec int]))
+         (struct RCIntN () [(& static imm (struct RCDataIntN []))])
+         (struct Cycle1 () [(Option (~ (struct Cycle []))) (vec int)])
+         (struct Cycle2 () [(Option (~ (struct Cycle [])))])
+         ]))
+
+(check-not-false (redex-match Patina-machine srs test-dst-srs))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; simple test prog that assigns to the result pointer
@@ -332,21 +344,57 @@
   [(reject debug) 0])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; sum
+
+(define-metafunction Patina-machine
+  sum : zs -> z
+  
+  [(sum []) 0]
+  [(sum [z_0 z_1 ...])
+   ,(+ (term z_0) (term (sum [z_1 ...])))]
+
+  )
+
+(test-equal (term (sum [1 2 3]))
+            (term 6))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; prefix sum
 
 (define-metafunction Patina-machine
   prefix-sum : z zs -> zs
   
-  [(prefix-sum z_0 ()) ()]
-  [(prefix-sum z_0 (z_1 z_2 ...))
-   ,(append (term (z_3)) (term (prefix-sum z_3 (z_2 ...))))
-   (where z_3 ,(+ (term z_0) (term z_1)))])
+  [(prefix-sum z_a ()) ()]
+  [(prefix-sum z_a (z_b z_c ...))
+   [z_d z_e ...]
+   (where z_d (sum [z_a z_b]))
+   (where [z_e ...] (prefix-sum z_d [z_c ...]))]
+
+  )
 
 (test-equal (term (prefix-sum 0 ()))
             (term ()))
 
 (test-equal (term (prefix-sum 0 (1 2 3)))
             (term (1 3 6)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; offset, inc, and dec
+
+(define-metafunction Patina-machine
+  offset : α z -> α
+
+  [(offset α z) ,(+ (term α) (term z))])
+
+(define-metafunction Patina-machine
+  inc : α -> α
+
+  [(inc z) ,(add1 (term z))])
+
+(define-metafunction Patina-machine
+  dec : α -> α
+
+  [(dec z) ,(sub1 (term z))])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; deref function -- search a heap for a given address.
@@ -451,6 +499,143 @@
 
 (test-equal (term (is-void (ptr 2))) #f)
 (test-equal (term (is-void void)) #t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; field-tys
+
+(define-metafunction Patina-machine
+  field-tys : srs s ℓs -> (ty ...)
+  
+  [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 ℓs_1)
+   (ty_0 ...)] ;; FIXME subst lifetimes
+
+  [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_1 ℓs_1)
+   (field-tys (sr ...) s_1 ℓs_1)])
+
+(test-equal (term (field-tys ,test-srs A ()))
+            (term (int)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; is-DST
+
+(define-metafunction Patina-machine
+  is-DST : srs ty -> boolean
+
+  [(is-DST srs ty) (is-DST-1 [] srs ty)])
+
+(define-metafunction Patina-machine
+  is-DST-1 : [s ...] srs ty -> boolean
+
+  [(is-DST-1 [s_a ...] srs (struct s ℓs))
+   #false
+   (side-condition (member (term s) (term [s_a ...])))]
+  [(is-DST-1 [s_a ...] srs (struct s ℓs))
+   (is-DST-1 [s s_a ...] srs ty_z)
+   (where (ty_a ... ty_z) (field-tys srs s ℓs))]
+  [(is-DST-1 [s ...] srs (~ ty)) #false]
+  [(is-DST-1 [s ...] srs (& ℓ mq ty)) #false]
+  [(is-DST-1 [s ...] srs int) #false]
+  [(is-DST-1 [s ...] srs (Option ty)) (is-DST-1 [s ...] srs ty)]
+  [(is-DST-1 [s ...] srs (vec ty)) #true]
+  [(is-DST-1 [s ...] srs (vec ty z)) #false])
+
+(test-equal (term (is-DST ,test-dst-srs (~ (vec int))))
+            #false)
+
+(test-equal (term (is-DST ,test-dst-srs (vec int)))
+            #true)
+
+(test-equal (term (is-DST ,test-dst-srs (struct RCDataInt3 [])))
+            #false)
+
+(test-equal (term (is-DST ,test-dst-srs (struct RCInt3 [])))
+            #false)
+
+(test-equal (term (is-DST ,test-dst-srs (struct RCDataIntN [])))
+            #true)
+
+(test-equal (term (is-DST ,test-dst-srs (struct RCIntN [])))
+            #false)
+
+(test-equal (term (is-DST ,test-dst-srs (struct Cycle1 [])))
+            #true)
+
+(test-equal (term (is-DST ,test-dst-srs (struct Cycle2 [])))
+            #false)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; sizeof
+
+(define-metafunction Patina-machine
+  sizeof : srs ty -> z
+  
+  [(sizeof srs int) 
+   1]
+  
+  [(sizeof srs (~ ty))
+   1]
+  
+  [(sizeof srs (& ℓ mq ty))
+   1]
+  
+  [(sizeof srs (struct s ℓs))
+   (sum [(sizeof srs ty) ...])
+   (where [ty ...] (field-tys srs s ℓs))]
+
+  [(sizeof srs (vec ty z))
+   ,(* (term (sizeof srs ty)) (term z))]
+
+  [(sizeof srs (Option ty))
+   ,(add1 (term (sizeof srs ty)))]
+
+  )
+
+(test-equal (term (sizeof ,test-srs (struct A ())))
+            (term 1))
+
+(test-equal (term (sizeof ,test-srs (struct B (static))))
+            (term 2))
+
+(test-equal (term (sizeof ,test-srs (struct C (static))))
+            (term 3))
+
+(test-equal (term (sizeof ,test-srs (Option (struct C (static)))))
+            (term 4))
+
+(test-equal (term (sizeof ,test-srs (vec int 3)))
+            (term 3))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; sizeof-dst
+
+(define-metafunction Patina-machine
+  sizeof-dst : srs ty hv -> z
+  
+  [(sizeof-dst srs (vec ty) (int z))
+   ,(* (term (sizeof srs ty)) (term z))]
+
+  [(sizeof-dst srs (struct s ℓs) hv)
+   (sum [z_a z_z])
+   (where [ty_a ... ty_z] (field-tys srs s ℓs))
+   (where z_a (sum [(sizeof srs ty_a) ...]))
+   (where z_z (sizeof-dst srs ty_z hv))]
+
+  )
+
+(test-equal (term (sizeof ,test-srs (struct A ())))
+            (term 1))
+
+(test-equal (term (sizeof ,test-srs (struct B (static))))
+            (term 2))
+
+(test-equal (term (sizeof ,test-srs (struct C (static))))
+            (term 3))
+
+(test-equal (term (sizeof ,test-srs (Option (struct C (static)))))
+            (term 4))
+
+(test-equal (term (sizeof ,test-srs (vec int 3)))
+            (term 3))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; deinit -- deinitializes a block of memory
@@ -572,63 +757,6 @@
 (test-equal (term (vtype ,test-T c)) (term (struct C (static))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; field-tys
-
-(define-metafunction Patina-machine
-  field-tys : srs s ℓs -> (ty ...)
-  
-  [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 ℓs_1)
-   (ty_0 ...)] ;; FIXME subst lifetimes
-
-  [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_1 ℓs_1)
-   (field-tys (sr ...) s_1 ℓs_1)])
-
-(test-equal (term (field-tys ,test-srs A ()))
-            (term (int)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; sizeof
-
-(define-metafunction Patina-machine
-  sizeof : srs ty -> z
-  
-  [(sizeof srs int) 
-   1]
-  
-  [(sizeof srs (~ ty))
-   1]
-  
-  [(sizeof srs (& ℓ mq ty))
-   1]
-  
-  [(sizeof srs (struct s ℓs))
-   ,(foldl + 0 (map (λ (t) (term (sizeof srs ,t)))
-                    (term (field-tys srs s ℓs))))]
-
-  [(sizeof srs (vec ty z_v))
-   ,(* (term z) (term z_v))
-   (where z (sizeof srs ty))]
-
-  [(sizeof srs (Option ty))
-   ,(add1 (term (sizeof srs ty)))]
-
-  )
-
-(test-equal (term (sizeof ,test-srs (struct A ())))
-            (term 1))
-
-(test-equal (term (sizeof ,test-srs (struct B (static))))
-            (term 2))
-
-(test-equal (term (sizeof ,test-srs (struct C (static))))
-            (term 3))
-
-(test-equal (term (sizeof ,test-srs (Option (struct C (static)))))
-            (term 4))
-
-(test-equal (term (sizeof ,test-srs (vec int 3)))
-            (term 3))
-
 ;; field-offsets -- determines the offsets of each field of a struct
 
 (define-metafunction Patina-machine
@@ -636,9 +764,10 @@
   
   [(field-offsets srs s ℓs)
    (0 z ...)
-   (where tys (field-tys srs s ℓs))
-   (where (z ...) ,(drop-right (map (λ (t) (term (sizeof srs ,t)))
-                                    (term tys)) 1))])
+   (where (ty_a ... ty_z) (field-tys srs s ℓs))
+   (where (z ...) [(sizeof srs ty_a) ...])]
+
+  )
 
 (test-equal (term (field-offsets ,test-srs C (static)))
             (term (0 1)))
@@ -712,13 +841,13 @@
    (where (ptr α) (deref H (lvaddr srs H V T lv)))]
        
   [(lvaddr srs H V T (lv · f))
-   ,(+ (term (lvaddr srs H V T lv))
-       (term (offsetof srs s ℓs f)))
+   (offset (lvaddr srs H V T lv)
+           (offsetof srs s ℓs f))
    (where (struct s ℓs) (lvtype srs T lv))]
 
   ;; indexing into a fixed-length vector
   [(lvaddr srs H V T (lv_v @ lv_i))
-   ,(+ (term α_v) (term z_e))
+   (offset α_v z_e)
    (where (vec ty_e z_v) (lvtype srs T lv_v))
    (where α_v (lvaddr srs H V T lv_v))
    (where α_i (lvaddr srs H V T lv_i))
@@ -833,7 +962,7 @@
    (where α_r (lvaddr srs H V T lv_r))
    (where (int number_l) (deref H α_l))
    (where (int number_r) (deref H α_r))
-   (where number_s ,(+ (term number_l) (term number_r)))]
+   (where number_s (offset number_l number_r))]
 
   [(rveval srs H V T α (Some lv))
    H_2
@@ -967,8 +1096,10 @@
    H]
 
   [(free-struct srs H α (ty_0 ty_1 ...) (z_0 z_1 ...))
-   (free-struct srs (free srs H ty_0 β) α (ty_1 ...) (z_1 ...))
-   (where β ,(+ (term α) (term z_0)))])
+   (free-struct srs H_1 α (ty_1 ...) (z_1 ...))
+   (where H_1 (free srs H ty_0 (offset α z_0)))]
+  
+  )
 
 (define-metafunction Patina-machine
   free-vec : srs H α ty z z -> H
@@ -979,11 +1110,25 @@
   [(free-vec srs H α ty z_t z_i)
    (free-vec srs
              (free srs H ty α)
-             ,(+ (term α) (term z_t))
+             (offset α z_t)
              ty
              z_t
-             ,(sub1 (term z_i)))
-   ]
+             (dec z_i))]
+  )
+
+(define-metafunction Patina-machine
+  free-dst : srs H ty α hv -> H
+
+  [(free-dst srs H (vec ty) α (int z))
+   (free-vec srs H α ty z_t z)
+   (where z_t (sizeof srs ty))]
+
+  [(free-dst srs H (struct s ℓs) α)
+   (free-dst srs H_1 ty_z (offset α z_z) hv)
+   (where (ty_a ... ty_z) (field-tys srs s ℓs))
+   (where (z_a ... z_z) (field-offsets srs s ℓs))
+   (where H_1 (free-struct srs H α (ty_a ...) (z_a ...)))]
+
   )
 
 (define-metafunction Patina-machine
@@ -993,7 +1138,8 @@
    H
    (side-condition (term (is-void (deref H α))))]
   
-  [(free srs H int α) H]
+  [(free srs H int α)
+   H]
 
   [(free srs H (vec ty z) α)
    (free-vec srs H α ty z_t z)
@@ -1006,7 +1152,17 @@
    (where (ptr β) (deref H α))
    (where z (sizeof srs ty))
    (where H_1 (free srs H ty β))
-   (where H_2 (shrink H_1 β z))]
+   (where H_2 (shrink H_1 β z))
+   (side-condition (not (term (is-DST srs ty))))]
+
+  [(free srs H (~ ty) α_0)
+   H_2
+   (where (ptr β) (deref H α))
+   (where hv (deref H (inc α)))
+   (where z (sizeof-dst srs ty hv))
+   (where H_1 (free-dst srs H ty β hv))
+   (where H_2 (shrink H_1 β z))
+   (side-condition (term (is-DST srs ty)))]
 
   [(free srs H (struct s ℓs) α)
    (free-struct srs H α tys zs)
@@ -1347,76 +1503,3 @@
 (check-not-false (redex-match Patina-machine C sum-state-N))
 
 (test-->> machine-step sum-state-0 sum-state-N)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; DST
-
-(define-extended-language Patina-DST-machine Patina-machine
-  (rv (vec lv ...))
-  (ty ....
-      (vec ty z)
-      (vec ty)))
-
-(check-not-false (redex-match Patina-DST-machine ty (term (vec int))))
-(check-not-false (redex-match Patina-DST-machine ty (term (~ (vec int)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; testing
-
-(define test-dst-srs
-  (term [(struct RCDataInt3 () [int [vec int 3]])
-         (struct RCInt3 () [(& static imm (struct RCDataInt3 []))])
-         ;(struct RCDataIntN () (int [vec int]))
-         ;(struct RCIntN () [(& static imm (struct RCDataIntN []))])
-         ;(struct Cycle1 () [(Option (~ (struct Cycle[]))) [(vec int)]])
-         (struct Cycle2 () [(Option (~ (struct Cycle [])))])
-         ]))
-
-(check-not-false (redex-match Patina-DST-machine srs test-dst-srs))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; is-DST
-
-(define-metafunction Patina-DST-machine
-  is-DST : srs ty -> boolean
-
-  [(is-DST srs ty) (is-DST-1 [] srs ty)])
-
-(define-metafunction Patina-DST-machine
-  is-DST-1 : [s ...] srs ty -> boolean
-
-  [(is-DST-1 [s_a ...] srs (struct s ℓs)) #false
-   (side-condition (member (term s) (term [s_a ...])))]
-  [(is-DST-1 [s_a ...] srs (struct s ℓs))
-   ,(member #true (term [(is-DST-1 [s s_a ...] srs ty_f) ...]))
-   (where (ty_f ...) (field-tys srs s ℓs))]
-  [(is-DST-1 [s ...] srs (~ ty)) #false]
-  [(is-DST-1 [s ...] srs (& ℓ mq ty)) #false]
-  [(is-DST-1 [s ...] srs int) #false]
-  [(is-DST-1 [s ...] srs (Option ty)) (is-DST-1 [s ...] srs ty)]
-  [(is-DST-1 [s ...] srs (vec ty)) #true]
-  [(is-DST-1 [s ...] srs (vec ty z)) #false])
-
-; (test-equal (term (is-DST ,test-dst-srs (~ (vec int))))
-;             #false)
-; 
-; (test-equal (term (is-DST ,test-dst-srs (vec int)))
-;             #true)
-
-(test-equal (term (is-DST ,test-dst-srs (struct RCDataInt3 [])))
-            #false)
-
-(test-equal (term (is-DST ,test-dst-srs (struct RCInt3 [])))
-            #false)
-
-;(test-equal (term (is-DST ,test-dst-srs (struct RCDataIntN [])))
-;            #true)
-;
-;(test-equal (term (is-DST ,test-dst-srs (struct RCIntN [])))
-;            #false)
-;
-;(test-equal (term (is-DST ,test-dst-srs (struct Cycle1 [])))
-;            #false)
-
-(test-equal (term (is-DST ,test-dst-srs (struct Cycle2 [])))
-            #false)
