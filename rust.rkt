@@ -41,7 +41,8 @@
       (lv @ lv)                    ;; indexing
       (* lv))                      ;; deref
   ;; rvalues :
-  (rv (cm lv)                      ;; copy lvalue
+  (rv (lv)                         ;; move lvalue
+      (copy lv)                    ;; copy POD lvalue
       (& ℓ mq lv)                  ;; take address of lvalue
       (struct s ℓs (lv ...))       ;; struct constant
       (new lv)                     ;; allocate memory
@@ -53,7 +54,6 @@
       (vec-len lv)                 ;; extract length of a vector
       (pack lv ty)                 ;; convert fixed-length to DST
       )
-  (cm copy move)
   (mode (ref mq) move)
   ;; types : 
   (tys (ty ...))
@@ -1106,7 +1106,7 @@
    (where β (lvaddr srs H V T lv))
    (where H_1 (memcopy H α β z))]
 
-  [(rveval srs H V T α (move lv))
+  [(rveval srs H V T α (lv))
    H_1
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
