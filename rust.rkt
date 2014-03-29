@@ -357,13 +357,13 @@
 ;; get -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
 
 (define-metafunction Patina-machine
-  get : any ((any any) ...) -> any
+  get : any [(any any) ...] -> any
 
-  [(get any_k0 ((any_k0 any_v0) (any_k1 any_v1) ...))
+  [(get any_k0 [(any_k0 any_v0) (any_k1 any_v1) ...])
    any_v0]
 
-  [(get any_k0 ((any_k1 any_v1) (any_k2 any_v2) ...))
-   (get any_k0 ((any_k2 any_v2) ...))])
+  [(get any_k0 [(any_k1 any_v1) (any_k2 any_v2) ...])
+   (get any_k0 [(any_k2 any_v2) ...])])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get* -- search through multiple assoc lists
@@ -1851,4 +1851,131 @@
 (check-not-false (redex-match Patina-machine C dst-state-N))
 
 (test-->> machine-step dst-state-0 dst-state-N)
+
+;;;;
+;;
+;; TYPING RULES
+;;
+;;;;
+
+(define-extended-language Patina-typing Patina-machine
+  ;; initialization: lists lvalues that have been initialized
+  (ι (lv ...)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ty-is-pod and tys-are-pod
+
+(define-judgment-form
+  Patina-typing
+  #:mode (ty-is-pod I I)
+  #:contract (ty-is-pod srs ty)
+
+  [--------------------------------------------------
+   (ty-is-pod srs int)]
+
+  [--------------------------------------------------
+   (ty-is-pod srs (& ℓ imm ty))]
+
+  [--------------------------------------------------
+   (ty-is-pod srs (Option ty))]
+
+  [--------------------------------------------------
+   (ty-is-pod srs (Option ty))]
+
+  [(where tys_s (field-tys srs s ℓs))
+   (tys-are-pod srs tys_s)
+   --------------------------------------------------
+   (ty-is-pod srs (struct s ℓs))]
+   
+  )
+
+(define-judgment-form
+  Patina-typing
+  #:mode (tys-are-pod I I)
+  #:contract (tys-are-pod srs tys)
+
+  [--------------------------------------------------
+   (tys-are-pod srs [])]
+
+  [(ty-is-pod srs ty_0)
+   (tys-are-pod srs [ty_1 ...])
+   --------------------------------------------------
+   (tys-are-pod srs [ty_0 ty_1 ...])]
+
+  )
+
+(test-equal
+ (judgment-holds
+  (ty-is-pod [] int))
+ #t)
+
+(test-equal
+ (judgment-holds
+  (ty-is-pod [] (~ int)))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lv-initialized and lv-not-initialied
+
+(define-metafunction Patina-typing
+  lv-initialized : ι lv -> boolean
+
+  [(lv-initialized ι lv)
+   ,(member (term lv) (term ι))])
+
+(define-metafunction Patina-typing
+  lv-not-initialized : ι lv -> boolean
+
+  [(lv-not-initialized ι lv)
+   ,(not (member (term lv) (term ι)))]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; rv-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode (rv-ok I I I I O O)
+  #:contract (rv-ok srs T ι rv ι ty)
+
+  [(where ty (lvtype srs T lv))
+   (side-condition (lv-initialized ι lv))
+   (side-condition (ty-is-pod srs ty))
+   --------------------------------------------------
+   (rv-ok srs T ι (copy lv) ι ty)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subtype
+;;
+;; FIXME this is going to need some sort of lifetime stack.
+
+(define-judgment-form
+  Patina-typing
+  #:mode (subtype I I)
+  #:contract (subtype ty ty)
+
+  [--------------------------------------------------
+   (subtype ty ty)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; st-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode (st-ok I I I I O)
+  #:contract (st-ok prog T ι st ι)
+
+  [(where ty_lv (lvtype srs T lv))
+   (rv-ok srs T ι rv (lv_rv ...) ty_rv)
+   (subtype ty_rv ty_lv)
+   (side-condition (lv-not-initialied ι lv))
+   --------------------------------------------------
+   (st-ok (srs fns) T ι (lv = rv) (lv lv_rv ...))]
+
+  )
 
