@@ -353,10 +353,19 @@
 (check-not-false (redex-match Patina-machine S initial-S))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; get -- a version of assoc that works on lists like '((k v) (k1 v1))
+;; get -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
 
-(define (get key list)
-  (cadr (assoc key list)))
+(define-metafunction Patina-machine
+  get : any ((any any) ...) -> any
+
+  [(get any_k0 ((any_k0 any_v0) (any_k1 any_v1) ...))
+   any_v0]
+
+  [(get any_k0 ((any_k1 any_v1) (any_k2 any_v2) ...))
+   (get any_k0 ((any_k2 any_v2) ...))])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; get* -- search through multiple assoc lists
 
 (define (get* key lists)
   (let ([v (assoc key (car lists))])
@@ -472,7 +481,7 @@
   deref : H α -> hv
 
   [(deref H α)
-   ,(get (term α) (term H))])
+   (get α H)])
 
 (test-equal (term (deref [(1 (ptr 22))] 1)) (term (ptr 22)))
 (test-equal (term (deref [(2 (ptr 23)) (1 (int 22))] 1)) (term (int 22)))
