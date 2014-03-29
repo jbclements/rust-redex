@@ -30,6 +30,7 @@
   ;; statements:
   [sts (st ...)]
   (st (lv = rv)
+      (free lv)                    ;; drop all memory owned by `lv`
       (call g ℓs lvs)
       (match lv (Some mode x => bk) (None => bk))
       bk)
@@ -1633,12 +1634,17 @@
         (where H_1 (free-variables srs H vmap_0 tmap_0))]
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
-   ;; though not always init'd.
-   ;; FIXME – we need to free the old memory
+   ;; but not initialized.
    [--> ((srs fns) H V T [(ℓ ((lv = rv) st ...)) sf ...])
         ((srs fns) H_1 V T [(ℓ (st ...)) sf ...])
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
+
+   ;; Frees. The memory for the lvalue should be fully initialized.
+   [--> ((srs fns) H V T [(ℓ ((free lv) st ...)) sf ...])
+        ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
+        (where H_1 (lvfree srs H V T lv))
+        (where H_2 (lvdeinit srs H_1 V T lv))]
 
    ;; Match, None case.
    [--> ((srs fns) H V T [(ℓ [st_a st ...]) sf ...])
