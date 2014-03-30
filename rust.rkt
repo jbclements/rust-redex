@@ -42,7 +42,7 @@
       (lv @ lv)                    ;; indexing
       (* lv))                      ;; deref
   ;; rvalues :
-  (rv (lv)                         ;; move lvalue
+  (rv lv                           ;; move lvalue
       (copy lv)                    ;; copy POD lvalue
       (& ℓ mq lv)                  ;; take address of lvalue
       (struct s ℓs (lv ...))       ;; struct constant
@@ -352,6 +352,38 @@
 
 (define initial-S (term [(l0 [(call main (l0) (resultp))])]))
 (check-not-false (redex-match Patina-machine S initial-S))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ∈ -- a metafunction like member
+
+(define-metafunction Patina-machine
+  ∈ : any [any ...] -> any
+
+  [(∈ any_0 [any_1 ...])
+   ,(not (not (member (term any_0) (term [any_1 ...]))))])
+
+(define-metafunction Patina-machine
+  ∉ : any [any ...] -> any
+
+  [(∉ any_0 [any_1 ...])
+   ,(not (member (term any_0) (term [any_1 ...])))])
+
+(test-equal (term (∈ 1 [1 2 3])) (term #t))
+(test-equal (term (∈ 4 [1 2 3])) (term #f))
+(test-equal (term (∉ 1 [1 2 3])) (term #f))
+(test-equal (term (∉ 4 [1 2 3])) (term #t))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; \\ -- a metafunction like member
+
+(define-metafunction Patina-machine
+  \\ : [any ...] any -> [any ...]
+
+  [(\\ [any_0 ...] any_1)
+   ,(remove (term any_1) (term [any_0 ...]))])
+
+(test-equal (term (\\ [1 2 3] 2)) (term [1 3]))
+(test-equal (term (\\ [1 2 3] 4)) (term [1 2 3]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
@@ -1920,16 +1952,12 @@
 (define-metafunction Patina-typing
   lv-initialized : ι lv -> boolean
 
-  [(lv-initialized ι lv)
-   ,(member (term lv) (term ι))])
+  [(lv-initialized ι lv) (∈ lv ι)])
 
 (define-metafunction Patina-typing
   lv-not-initialized : ι lv -> boolean
 
-  [(lv-not-initialized ι lv)
-   ,(not (member (term lv) (term ι)))]
-
-  )
+  [(lv-not-initialized ι lv) (∉ lv ι)])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rv-ok
@@ -1945,7 +1973,40 @@
    --------------------------------------------------
    (rv-ok srs T ι (copy lv) ι ty)]
 
+  [(where ty (lvtype srs T lv))
+   (side-condition (lv-initialized ι lv))
+   --------------------------------------------------
+   (rv-ok srs T ι lv (\\ ι lv) ty)]
+
   )
+
+; Test you can copy an int and the value remains in the initialized set.
+(test-equal
+ (judgment-holds
+  (rv-ok [] [[(i int)]] [i] (copy i) ι ty)
+  (ι ty))
+ (term (([i] int))))
+
+; Test you can copy an uninitialized int.
+(test-equal
+ (judgment-holds
+  (rv-ok [] [[(i int)]] [] (copy i) ι ty)
+  (ι ty))
+ (term ()))
+
+; Test you cannot copy a ~int.
+(test-equal
+ (judgment-holds
+  (rv-ok [] [[(i (~ int))]] [i] (copy i) ι ty)
+  (ι ty))
+ (term ()))
+
+; But you can move it.
+(test-equal
+ (judgment-holds
+  (rv-ok [] [[(i (~ int))]] [i] i ι ty)
+  (ι ty))
+ (term (([] (~ int)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; subtype
