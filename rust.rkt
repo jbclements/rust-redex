@@ -354,7 +354,7 @@
 (check-not-false (redex-match Patina-machine S initial-S))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; ∈ -- a metafunction like member
+;; ∈, ∉ -- a metafunction like member
 
 (define-metafunction Patina-machine
   ∈ : any [any ...] -> any
@@ -372,6 +372,41 @@
 (test-equal (term (∈ 4 [1 2 3])) (term #f))
 (test-equal (term (∉ 1 [1 2 3])) (term #f))
 (test-equal (term (∉ 4 [1 2 3])) (term #t))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ∀, ∃ -- useful functions for operating over vectors of booleans.
+;; Particularly useful in combination with macros and maps.
+
+(define-metafunction Patina-machine
+  ∀ : [any ...] -> boolean
+
+  [(∀ []) #t]
+  [(∀ [#f any ...]) #f]
+  [(∀ [#t any ...]) (∀ [any ...])]
+  )
+
+(define-metafunction Patina-machine
+  ∃ : [any ...] -> boolean
+
+  [(∃ []) #f]
+  [(∃ [#t any ...]) #t]
+  [(∃ [#f any ...]) (∃ [any ...])]
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ≠ -- test if things are different
+
+(define-metafunction Patina-machine
+  ≠ : any any -> boolean
+
+ [(≠ any any) #f]
+ [(≠ any_0 any_1) #t]
+ )
+
+(test-equal (term (≠ x x)) (term #f))
+(test-equal (term (≠ x y)) (term #t))
+(test-equal (term (≠ (~ int) (~ int))) (term #f))
+(test-equal (term (≠ (~ int) (~ (~ int)))) (term #t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ∪ -- a metafunction for set union
@@ -2155,6 +2190,102 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; permits action restr lv
+;;
+;; Holds if the restriction `restr` permits the action `action` on `lv`
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (permits I      I     I )
+  #:contract (permits action restr lv)
+
+  [(side-condition (∉ action actions))
+   --------------------------------------------------
+   (permits action (lv_1 ℓ actions) lv_0)]
+
+  [(side-condition (≠ lv_0 lv_1))
+   --------------------------------------------------
+   (permits action (lv_1 ℓ actions) lv_0)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; permitted-to action ℜ lv
+;;
+;; Holds if, given the in-scope restrictions ℜ, it is legal to
+;; take action `action` affecting `lv`
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (permitted-to I      I I )
+  #:contract (permitted-to action ℜ lv)
+
+  [--------------------------------------------------
+   (permitted-to action [] lv)]
+
+  [(permits action restr_0 lv)
+   (permitted-to action [restr_1 ...] lv)
+   --------------------------------------------------
+   (permitted-to action [restr_0 restr_1 ...] lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; unique-path srs T lv
+;;
+;; Holds if the path `lv` is a *unique path*, meaning that it is the only
+;; path that leads to that particular address which is currently accessible,
+;; assuming that `lv` itself is not borrowed.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (unique-path I   I I )
+  #:contract (unique-path srs T lv)
+
+  [--------------------------------------------------
+   (unique-path srs T x)]
+
+  [(unique-path srs T lv)
+   --------------------------------------------------
+   (unique-path srs T (lv · f))]
+
+  [(unique-path srs T lv)
+   --------------------------------------------------
+   (unique-path srs T (lv @ lv_1))]
+
+  [(where (~ ty) (lvtype srs T lv))
+   (unique-path srs T lv)
+   --------------------------------------------------
+   (unique-path srs T (* lv))]
+
+  [(where (& ℓ mut ty) (lvtype srs T lv))
+   (unique-path srs T lv)
+   --------------------------------------------------
+   (unique-path srs T (* lv))]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; unique-path-if-mutable srs T mq lv
+;;
+;; For a mutable borrow (`mq = mut`), requires that `lv` be a unique
+;; path.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (unique-path-if-mut I   I I  I )
+  #:contract (unique-path-if-mut srs T mq lv)
+
+  [--------------------------------------------------
+   (unique-path-if-mut srs T imm lv)]
+
+  [(unique-path srs T lv)
+   --------------------------------------------------
+   (unique-path-if-mut srs T mut lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; restrictions
 ;;
 ;; FIXME
@@ -2167,6 +2298,26 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; move-vars
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (use-lvs-ok I   I I I I I   O   O)
+  #:contract (use-lvs-ok srs T Λ ℜ ℑ lvs tys ℑ)
+
+  [--------------------------------------------------
+   (use-lvs-ok srs T Λ ℜ ℑ [] [] ℑ)]
+
+  [(where ty (lvtype srs T lv))
+   (lv-initialized ℑ lv)
+   (can-move-from srs T Λ ℜ lv)
+   (use-lvs-ok srs T Λ ℜ (\\ ℑ lv) [lv_r ...] [ty_r ...] ℑ_r)
+   --------------------------------------------------
+   (use-lvs-ok srs T Λ ℜ ℑ [lv lv_r ...] [ty ty_r ...] ℑ_r)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rv-ok
 
 (define-judgment-form
@@ -2174,25 +2325,37 @@
   #:mode     (rv-ok I   I I I I I  O  O O)
   #:contract (rv-ok srs T Λ ℜ ℑ rv ty ℑ ℜ)
 
+  ;; copy x
   [(where ty (lvtype srs T lv))
    (lv-initialized ℑ lv)
+   (permitted-to (access imm) ℜ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
    (rv-ok srs T Λ ℜ ℑ (copy lv) ty ℑ ℜ)]
 
-  [(where ty (lvtype srs T lv))
-   (side-condition (lv-initialized ℑ lv))
-   (can-move-from srs T Λ ℜ lv)
+  ;; x
+  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty_out] ℑ_out)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ lv ty (\\ ℑ lv) ℜ)]
+   (rv-ok srs T Λ ℜ ℑ lv ty_out ℑ_out ℜ)]
 
+  ;; & ℓ mq lv
   [(where ty (lvtype srs T lv))
    (lifetime-in-scope Λ ℓ)
    (lifetime-bound Λ ℓ ty)
+   (permitted-to (borrow mq) ℜ lv)
+   (unique-path-if-mut srs T mq lv)
    (where ℜ_loan (restrictions srs T ℓ mq lv))
-   (side-condition (lv-initialized ℑ lv))
+   (lv-initialized ℑ lv)
    --------------------------------------------------
    (rv-ok srs T Λ ℜ ℑ (& ℓ mq lv) (& ℓ mq ty) ℑ (∪ ℜ ℜ_loan))]
+
+  ;; struct s ℓs [lv ...]
+  [(where [ty_f ...] (field-tys srs [ℓ ...]))
+   (use-lvs-ok srs T Λ ℜ ℑ [lv ...] [ty_a ...] ℑ_a)
+   (lifetime-in-scope Λ ℓ) ...
+   (subtype Λ ty_a ty_f) ...
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) ℑ_a ℜ)]
 
   )
 
@@ -2254,10 +2417,9 @@
   #:mode     (st-ok I    I I I I I  O O)
   #:contract (st-ok prog T Λ ℜ ℑ st ℑ ℜ)
 
-  [(where ty_lv (lvtype srs T lv))
-   (rv-ok srs T Λ ℜ ℑ rv
-          ty_rv (lv_rv ...) ℜ_rv)
-   (subtype Λ ty_rv ty_lv)
+  [(rv-ok srs T Λ ℜ ℑ rv ty_rv (lv_rv ...) ℜ_rv)
+   (permitted-to (access mut) ℜ_rv lv)
+   (subtype Λ ty_rv (lvtype srs T lv))
    (side-condition (lv-not-initialied ℑ lv))
    --------------------------------------------------
    (st-ok (srs fns) T Λ ℜ ℑ (lv = rv) (lv lv_rv ...) ℜ_rv)]
