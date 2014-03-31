@@ -374,7 +374,38 @@
 (test-equal (term (∉ 4 [1 2 3])) (term #t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; \\ -- a metafunction like member
+;; ∪ -- a metafunction for set union
+
+(define-metafunction Patina-machine
+  ∪ : [any ...] [any ...] -> [any ...]
+
+  [(∪ [any_0 any_1 ...] [any_2 ...])
+   (∪ [any_1 ...] [any_2 ...])
+   (side-condition (term (∈ any_0 [any_2 ...])))]
+
+  [(∪ [any_0 any_1 ...] [any_2 ...])
+   (∪ [any_1 ...] [any_0 any_2 ...])]
+
+  [(∪ [] [any_1 ...])
+   [any_1 ...]]
+
+  )
+
+(test-equal (term (∪ [1 4] [1 2 3])) (term [4 1 2 3]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ⊎ -- a metafunction for disjoint set union
+
+(define-metafunction Patina-machine
+  ⊎ : [any ...] [any ...] -> [any ...]
+
+  [(⊎ [any_0 ...] [any_1 ...])
+   ([any_0 ...] [any_1 ...])]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; \\ -- a metafunction like remove
 
 (define-metafunction Patina-machine
   \\ : [any ...] any -> [any ...]
@@ -1892,7 +1923,27 @@
 
 (define-extended-language Patina-typing Patina-machine
   ;; initialization: lists lvalues that have been initialized
-  (ι (lv ...)))
+  (ℑ (lv ...))
+
+  ;; lifetime declaration: lifetime ℓ is in scope, and it is a sublifetime
+  ;; of ℓs
+  (λ (ℓ ℓs))
+  (λs (λ ...))
+
+  ;; lifetime relation: what lifetimes are in scope; in future, what
+  ;; is their relation to one another
+  (Λ λs)
+
+  ;; restrictable actions
+  (action (access mq)
+          (borrow mq))
+  (actions [action ...])
+
+  ;; restrictions
+  (restr (lv ℓ actions))
+  (ℜ [restr ...])
+         
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ty-is-pod and tys-are-pod
@@ -1923,7 +1974,7 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode (tys-are-pod I I)
+  #:mode     (tys-are-pod I   I)
   #:contract (tys-are-pod srs tys)
 
   [--------------------------------------------------
@@ -1947,79 +1998,251 @@
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lv-initialized and lv-not-initialied
+;; lv-initialized ℑ lv
+;; lv-not-initialized ℑ lv
+;;
+;; Hold if the lvalue lv is or is not initialized, respectively.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lv-initialized I I )
+  #:contract (lv-initialized ℑ lv)
+
+  [(side-condition (∈ lv ℑ))
+   --------------------------------------------------
+   (lv-initialized ℑ lv)]
+  )
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lv-not-initialized I I )
+  #:contract (lv-not-initialized ℑ lv)
+
+  [(side-condition (∉ lv ℑ))
+   --------------------------------------------------
+   (lv-not-initialized ℑ lv)]
+  )
+
+(test-equal
+ (judgment-holds (lv-initialized [a b] a))
+ #t)
+
+(test-equal
+ (judgment-holds (lv-initialized [a b] b))
+ #t)
+
+(test-equal
+ (judgment-holds (lv-initialized [a b] c))
+ #f)
+
+(test-equal
+ (judgment-holds (lv-not-initialized [a b] a))
+ #f)
+
+(test-equal
+ (judgment-holds (lv-not-initialized [a b] b))
+ #f)
+
+(test-equal
+ (judgment-holds (lv-not-initialized [a b] c))
+ #t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; in-scope-lifetimes
+;;
+;; Convert a Λ to a list ℓs of in-scope lifetimes
 
 (define-metafunction Patina-typing
-  lv-initialized : ι lv -> boolean
+  in-scope-lifetimes : Λ -> ℓs
 
-  [(lv-initialized ι lv) (∈ lv ι)])
+  [(in-scope-lifetimes ((ℓ ℓs) ...)) (ℓ ...)])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; restricted-paths
 
 (define-metafunction Patina-typing
-  lv-not-initialized : ι lv -> boolean
+  restricted-paths : ℜ -> lvs
 
-  [(lv-not-initialized ι lv) (∉ lv ι)])
+  [(restricted-paths [(lv ℓ actions) ...]) (lv ...)])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lifetime-in-scope Λ ℓ
+;;
+;; Holds if the lifetime ℓ is in scope
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lifetime-in-scope I I)
+  #:contract (lifetime-in-scope Λ ℓ)
+
+  [(side-condition (∈ ℓ (in-scope-lifetimes Λ)))
+   --------------------------------------------------
+   (lifetime-in-scope Λ ℓ)]
+
+  )
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [(a []) (b [])] a))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [(a []) (b [])] b))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [(a []) (b [])] c))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lifetime-bound Λ ℓ ty
+;;
+;; If this judgement holds, then the type `ty` is bound by the
+;; lifetime ℓ.
+;;
+;; FIXME
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lifetime-bound I I I )
+  #:contract (lifetime-bound Λ ℓ ty)
+
+  [--------------------------------------------------
+   (lifetime-bound Λ ℓ ty)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; unrestricted ℜ lv
+;;
+;; True if there is no restriction that applies to lv.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (unrestricted I I)
+  #:contract (unrestricted ℜ lv)
+
+  [(side-condition (∉ lv (restricted-paths ℜ)))
+   --------------------------------------------------
+   (unrestricted ℜ lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-move-from
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-move-from I   I I I I )
+  #:contract (can-move-from srs T Λ ℜ lv)
+
+  [(unrestricted ℜ x)
+   --------------------------------------------------
+   (can-move-from srs T Λ ℜ x)]
+
+  [(can-move-from srs T Λ ℜ lv)
+   --------------------------------------------------
+   (can-move-from srs T Λ ℜ (lv · f))]
+
+  [(can-move-from srs T Λ ℜ lv)
+   --------------------------------------------------
+   (can-move-from srs T Λ ℜ (lv @ lv_1))]
+
+  [(where (~ ty) (lvtype srs T lv))
+   (can-move-from srs T Λ ℜ lv)
+   --------------------------------------------------
+   (can-move-from srs T Λ ℜ (* lv))]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; restrictions
+;;
+;; FIXME
+
+(define-metafunction Patina-typing
+  restrictions : srs T ℓ mq lv -> ℜ
+
+  [(restrictions srs T ℓ mq lv) []]
+
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rv-ok
 
 (define-judgment-form
   Patina-typing
-  #:mode (rv-ok I I I I O O)
-  #:contract (rv-ok srs T ι rv ι ty)
+  #:mode     (rv-ok I   I I I I I  O  O O)
+  #:contract (rv-ok srs T Λ ℜ ℑ rv ty ℑ ℜ)
 
   [(where ty (lvtype srs T lv))
-   (side-condition (lv-initialized ι lv))
+   (lv-initialized ℑ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
-   (rv-ok srs T ι (copy lv) ι ty)]
+   (rv-ok srs T Λ ℜ ℑ (copy lv) ty ℑ ℜ)]
 
   [(where ty (lvtype srs T lv))
-   (side-condition (lv-initialized ι lv))
+   (side-condition (lv-initialized ℑ lv))
+   (can-move-from srs T Λ ℜ lv)
    --------------------------------------------------
-   (rv-ok srs T ι lv (\\ ι lv) ty)]
+   (rv-ok srs T Λ ℜ ℑ lv ty (\\ ℑ lv) ℜ)]
+
+  [(where ty (lvtype srs T lv))
+   (lifetime-in-scope Λ ℓ)
+   (lifetime-bound Λ ℓ ty)
+   (where ℜ_loan (restrictions srs T ℓ mq lv))
+   (side-condition (lv-initialized ℑ lv))
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (& ℓ mq lv) (& ℓ mq ty) ℑ (∪ ℜ ℜ_loan))]
 
   )
 
 ; Test you can copy an int and the value remains in the initialized set.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i int)]] [i] (copy i) ι ty)
-  (ι ty))
- (term (([i] int))))
+  (rv-ok [] [[(i int)]] [] [] [i] (copy i) ty ℑ ℜ)
+  (ty ℑ ℜ))
+ (term ((int [i] []))))
 
-; Test you can copy an uninitialized int.
+; Test you cannot copy an uninitialized int.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i int)]] [] (copy i) ι ty)
-  (ι ty))
+  (rv-ok [] [[(i int)]] [] [] [] (copy i) ty ℑ ℜ)
+  (ty ℑ ℜ))
  (term ()))
 
 ; Test you cannot copy a ~int.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [i] (copy i) ι ty)
-  (ι ty))
+  (rv-ok [] [[(i (~ int))]] [] [] [i] (copy i) ty ℑ ℜ)
+  (ty ℑ ℜ))
  (term ()))
 
-; But you can move it.
+; ...But you can move it.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [i] i ι ty)
-  (ι ty))
- (term (([] (~ int)))))
+  (rv-ok [] [[(i (~ int))]] [] [] [i] i ty ℑ ℜ)
+  (ty ℑ ℜ))
+ (term (((~ int) [] []))))
+
+; ...Unless it is borrowed.
+(test-equal
+ (judgment-holds
+  (rv-ok [] [[(i (~ int))]] [] [(i a [])] [i] i ty ℑ ℜ)
+  (ty ℑ ℜ))
+ (term ()))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; subtype
 ;;
-;; FIXME this is going to need some sort of lifetime stack.
+;; FIXME
 
 (define-judgment-form
   Patina-typing
-  #:mode (subtype I I)
-  #:contract (subtype ty ty)
+  #:mode     (subtype I I I)
+  #:contract (subtype Λ ty ty)
 
   [--------------------------------------------------
-   (subtype ty ty)]
+   (subtype Λ ty ty)]
 
   )
 
@@ -2028,15 +2251,16 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode (st-ok I I I I O)
-  #:contract (st-ok prog T ι st ι)
+  #:mode     (st-ok I    I I I I I  O O)
+  #:contract (st-ok prog T Λ ℜ ℑ st ℑ ℜ)
 
   [(where ty_lv (lvtype srs T lv))
-   (rv-ok srs T ι rv (lv_rv ...) ty_rv)
-   (subtype ty_rv ty_lv)
-   (side-condition (lv-not-initialied ι lv))
+   (rv-ok srs T Λ ℜ ℑ rv
+          ty_rv (lv_rv ...) ℜ_rv)
+   (subtype Λ ty_rv ty_lv)
+   (side-condition (lv-not-initialied ℑ lv))
    --------------------------------------------------
-   (st-ok (srs fns) T ι (lv = rv) (lv lv_rv ...))]
+   (st-ok (srs fns) T Λ ℜ ℑ (lv = rv) (lv lv_rv ...) ℜ_rv)]
 
   )
 
