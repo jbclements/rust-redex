@@ -125,6 +125,7 @@
                          (struct A ())
                          (struct C (l0))
                          (struct B (l0))))
+         (struct E () ((~ int)))
          ]))
 
 (check-not-false (redex-match Patina-machine srs test-srs))
@@ -2191,8 +2192,9 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; permits action restr lv
+;; permit  action ℜ     lv
 ;;
-;; Holds if the restriction `restr` permits the action `action` on `lv`
+;; Holds if the restriction `restr` permits the action `action` on `lv`.
 
 (define-judgment-form
   Patina-typing
@@ -2209,24 +2211,14 @@
 
   )
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; permitted-to action ℜ lv
-;;
-;; Holds if, given the in-scope restrictions ℜ, it is legal to
-;; take action `action` affecting `lv`
-
 (define-judgment-form
   Patina-typing
-  #:mode     (permitted-to I      I I )
-  #:contract (permitted-to action ℜ lv)
+  #:mode     (permit I      I I )
+  #:contract (permit action ℜ lv)
 
-  [--------------------------------------------------
-   (permitted-to action [] lv)]
-
-  [(permits action restr_0 lv)
-   (permitted-to action [restr_1 ...] lv)
+  [(permits action restr lv) ...
    --------------------------------------------------
-   (permitted-to action [restr_0 restr_1 ...] lv)]
+   (permit action [restr ...] lv)]
 
   )
 
@@ -2318,6 +2310,21 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subtype
+;;
+;; FIXME
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (subtype I I I)
+  #:contract (subtype Λ ty ty)
+
+  [--------------------------------------------------
+   (subtype Λ ty ty)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rv-ok
 
 (define-judgment-form
@@ -2328,7 +2335,7 @@
   ;; copy x
   [(where ty (lvtype srs T lv))
    (lv-initialized ℑ lv)
-   (permitted-to (access imm) ℜ lv)
+   (permit (access imm) ℜ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
    (rv-ok srs T Λ ℜ ℑ (copy lv) ty ℑ ℜ)]
@@ -2342,7 +2349,7 @@
   [(where ty (lvtype srs T lv))
    (lifetime-in-scope Λ ℓ)
    (lifetime-bound Λ ℓ ty)
-   (permitted-to (borrow mq) ℜ lv)
+   (permit (borrow mq) ℜ lv)
    (unique-path-if-mut srs T mq lv)
    (where ℜ_loan (restrictions srs T ℓ mq lv))
    (lv-initialized ℑ lv)
@@ -2350,7 +2357,7 @@
    (rv-ok srs T Λ ℜ ℑ (& ℓ mq lv) (& ℓ mq ty) ℑ (∪ ℜ ℜ_loan))]
 
   ;; struct s ℓs [lv ...]
-  [(where [ty_f ...] (field-tys srs [ℓ ...]))
+  [(where [ty_f ...] (field-tys srs s [ℓ ...]))
    (use-lvs-ok srs T Λ ℜ ℑ [lv ...] [ty_a ...] ℑ_a)
    (lifetime-in-scope Λ ℓ) ...
    (subtype Λ ty_a ty_f) ...
@@ -2394,20 +2401,26 @@
   (ty ℑ ℜ))
  (term ()))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; subtype
-;;
-;; FIXME
+; Test a simple, well-typed struct expression: `A { i }`
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs [[(i int)]] [] [] [i] (struct A [] [i]) ty ℑ ℜ)
+  (ty ℑ ℜ))
+ (term [((struct A []) [] [])]))
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (subtype I I I)
-  #:contract (subtype Λ ty ty)
+; Like previous, but with an invalid type for the field.
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs [[(i (~ int))]] [] [] [i] (struct A [] [i]) ty ℑ ℜ)
+  (ty ℑ ℜ))
+ (term ()))
 
-  [--------------------------------------------------
-   (subtype Λ ty ty)]
-
-  )
+; Like previous, but with an uninitialized `i`
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs [[(i int)]] [] [] [] (struct A [] [i]) ty ℑ ℜ)
+  (ty ℑ ℜ))
+ (term []))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; st-ok
@@ -2418,7 +2431,7 @@
   #:contract (st-ok prog T Λ ℜ ℑ st ℑ ℜ)
 
   [(rv-ok srs T Λ ℜ ℑ rv ty_rv (lv_rv ...) ℜ_rv)
-   (permitted-to (access mut) ℜ_rv lv)
+   (permit (access mut) ℜ_rv lv)
    (subtype Λ ty_rv (lvtype srs T lv))
    (side-condition (lv-not-initialied ℑ lv))
    --------------------------------------------------
