@@ -50,8 +50,8 @@
       number                       ;; constant number
       (lv + lv)                    ;; sum
       (Some lv)                    ;; create an Option with Some
-      None                         ;; create an Option with None
-      (vec lv ...)                 ;; create a fixed-length vector
+      (None ty)                    ;; create an Option with None
+      (vec ty lv ...)              ;; create a fixed-length vector
       (vec-len lv)                 ;; extract length of a vector
       (pack lv ty)                 ;; convert fixed-length to DST
       )
@@ -63,8 +63,7 @@
       (& ℓ mq ty)                  ;; &'ℓ mq t
       int
       (Option ty)
-      (vec ty l)
-      (vec ty))
+      (vec ty olen))
   ;; mq : mutability qualifier
   (mq mut imm)
   ;; variables
@@ -82,6 +81,8 @@
   [z number]
   ;; l -- vector lengths
   [l number]
+  ;; olen -- optional vector lengths
+  [olen number erased]
   ;; hack for debugging
   (debug debug-me)
   )
@@ -144,7 +145,7 @@
                        (i2 int)
                        (i3 int)
                        (ints3p (& b1 imm (vec int 3)))
-                       (intsp (& b1 imm (vec int)))
+                       (intsp (& b1 imm (vec int erased)))
                        ]]))
 (check-not-false (redex-match Patina-machine T test-T))
 
@@ -197,9 +198,9 @@
 (define test-dst-srs
   (term [(struct RCDataInt3 () [int (vec int 3)])
          (struct RCInt3 (l0) [(& l0 imm (struct RCDataInt3 []))])
-         (struct RCDataIntN () (int (vec int)))
+         (struct RCDataIntN () (int (vec int erased)))
          (struct RCIntN (l0) [(& l0 imm (struct RCDataIntN []))])
-         (struct Cycle1 () [(Option (~ (struct Cycle []))) (vec int)])
+         (struct Cycle1 () [(Option (~ (struct Cycle []))) (vec int erased)])
          (struct Cycle2 () [(Option (~ (struct Cycle [])))])
          ]))
 
@@ -237,7 +238,7 @@
                         (l : (~ (struct List [])))
                         (p : (& l0 imm (struct List [])))]
                     [(i = 22)
-                     (n = None)
+                     (n = (None (~ (struct List []))))
                      (s = (struct List [] (i n)))
                      (l = (new s))
                      (i = 44)
@@ -300,7 +301,7 @@
 (define dst-srs
   (term [(struct RCDataInt3 () [int (vec int 3)])
          (struct RCInt3 (l0) [(& l0 imm (struct RCDataInt3 []))])
-         (struct RCDataIntN () (int (vec int)))
+         (struct RCDataIntN () (int (vec int erased)))
          (struct RCIntN (l0) [(& l0 imm (struct RCDataIntN []))])
          ]))
 
@@ -318,7 +319,7 @@
                     [(i1 = 22)
                      (i2 = 23)
                      (i3 = 24)
-                     (v = (vec i1 i2 i3))
+                     (v = (vec int i1 i2 i3))
                      (i1 = 1)
                      (rd3 = (struct RCDataInt3 [] (i1 v)))
                      (rd3p = (& l0 imm rd3))
@@ -373,6 +374,18 @@
 (test-equal (term (∈ 4 [1 2 3])) (term #f))
 (test-equal (term (∉ 1 [1 2 3])) (term #f))
 (test-equal (term (∉ 4 [1 2 3])) (term #t))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; size
+
+(define-metafunction Patina-machine
+  size : [any ...] -> number
+
+  [(size [any ...]) ,(length (term [any ...]))]
+  )
+
+(test-equal (term (size [1 2 3])) (term 3))
+(test-equal (term (size [])) (term 0))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ∀, ∃ -- useful functions for operating over vectors of booleans.
@@ -714,13 +727,13 @@
   [(is-DST-1 [s ...] srs (& ℓ mq ty)) #false]
   [(is-DST-1 [s ...] srs int) #false]
   [(is-DST-1 [s ...] srs (Option ty)) (is-DST-1 [s ...] srs ty)]
-  [(is-DST-1 [s ...] srs (vec ty)) #true]
+  [(is-DST-1 [s ...] srs (vec ty erased)) #true]
   [(is-DST-1 [s ...] srs (vec ty l)) #false])
 
-(test-equal (term (is-DST ,test-dst-srs (~ (vec int))))
+(test-equal (term (is-DST ,test-dst-srs (~ (vec int erased))))
             #false)
 
-(test-equal (term (is-DST ,test-dst-srs (vec int)))
+(test-equal (term (is-DST ,test-dst-srs (vec int erased)))
             #true)
 
 (test-equal (term (is-DST ,test-dst-srs (struct RCDataInt3 [])))
@@ -796,7 +809,7 @@
 (test-equal (term (sizeof ,test-srs (& b1 imm (vec int 3))))
             (term 1))
 
-(test-equal (term (sizeof ,test-srs (& b1 imm (vec int))))
+(test-equal (term (sizeof ,test-srs (& b1 imm (vec int erased))))
             (term 2))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1103,7 +1116,7 @@
   ;; indexing into a dynamically sized vector
   [(lvaddr srs H V T (lv_v @ lv_i))
    (lvaddr-elem srs H V T ty_e l_v lv_v lv_i)
-   (where (vec ty_e) (lvtype srs T lv_v))
+   (where (vec ty_e erased) (lvtype srs T lv_v))
    (where (int l_v) (reified srs H V T lv_v))]
 
   )
@@ -1186,7 +1199,7 @@
 (define-metafunction Patina-machine
   reify-pack : srs ty ty -> hv
 
-  [(reify-pack srs (vec ty l) (vec ty))
+  [(reify-pack srs (vec ty l) (vec ty erased))
    (int l)]
 
   [(reify-pack srs (struct s_s ℓs_s) (struct s_d ℓs_d))
@@ -1196,7 +1209,7 @@
 
   )
 
-(test-equal (term (reify-pack ,test-dst-srs (vec int 22) (vec int)))
+(test-equal (term (reify-pack ,test-dst-srs (vec int 22) (vec int erased)))
             (term (int 22)))
 
 (test-equal (term (reify-pack ,test-dst-srs (struct RCDataInt3 []) (struct RCDataIntN [])))
@@ -1283,13 +1296,13 @@
    (where H_1 (memmove H α_p β z))
    (where H_2 (update H_1 α (int 1)))]
 
-  [(rveval srs H V T α None)
+  [(rveval srs H V T α (None ty))
    (update H α (int 0))]
 
-  [(rveval srs H V T α (vec))
+  [(rveval srs H V T α (vec ty))
    H]
 
-  [(rveval srs H V T α (vec lv_e ...))
+  [(rveval srs H V T α (vec ty lv_e ...))
    H_1
 
    ;; find addresses α_e of the inputs lv_e
@@ -1346,7 +1359,7 @@
   ;; len for DST
   [(rveval srs H V T α (vec-len lv))
    (update H α (reified srs H V T lv))
-   (where (vec ty) (lvtype srs T lv))]
+   (where (vec ty erased) (lvtype srs T lv))]
 
   )
 
@@ -1429,7 +1442,7 @@
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs ,test-H ,test-V ,test-T
                                     (vaddr ,test-V s)
-                                    None)
+                                    (None int))
                             ,test-V
                             ,test-T
                             s))
@@ -1455,11 +1468,11 @@
                             p))
             (term (void)))
 
-;; test `(vec i1 i2 i3)`
+;; test `(vec int i1 i2 i3)`
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs ,test-H ,test-V ,test-T
                                     (vaddr ,test-V ints3)
-                                    (vec i1 i2 i3))
+                                    (vec int i1 i2 i3))
                             ,test-V
                             ,test-T
                             ints3))
@@ -1475,7 +1488,7 @@
                                     ,test-V
                                     ,test-T
                                     (vaddr ,test-V intsp)
-                                    (pack ints3p (& b1 imm (vec int))))
+                                    (pack ints3p (& b1 imm (vec int erased))))
                             ,test-V
                             ,test-T
                             intsp))
@@ -1550,7 +1563,7 @@
 (define-metafunction Patina-machine
   free-dst : srs H ty α hv -> H
 
-  [(free-dst srs H (vec ty) α (int z))
+  [(free-dst srs H (vec ty erased) α (int z))
    (free-vec srs H α ty z)]
 
   [(free-dst srs H (struct s ℓs) α)
@@ -1982,7 +1995,7 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; ty-is-pod and tys-are-pod
+;; ty-is-pod
 
 (define-judgment-form
   Patina-typing
@@ -2001,26 +2014,11 @@
   [--------------------------------------------------
    (ty-is-pod srs (Option ty))]
 
-  [(where tys_s (field-tys srs s ℓs))
-   (tys-are-pod srs tys_s)
+  [(where [ty_s ...] (field-tys srs s ℓs))
+   (ty-is-pod srs ty_s) ...
    --------------------------------------------------
    (ty-is-pod srs (struct s ℓs))]
    
-  )
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (tys-are-pod I   I)
-  #:contract (tys-are-pod srs tys)
-
-  [--------------------------------------------------
-   (tys-are-pod srs [])]
-
-  [(ty-is-pod srs ty_0)
-   (tys-are-pod srs [ty_1 ...])
-   --------------------------------------------------
-   (tys-are-pod srs [ty_0 ty_1 ...])]
-
   )
 
 (test-equal
@@ -2031,6 +2029,16 @@
 (test-equal
  (judgment-holds
   (ty-is-pod [] (~ int)))
+ #f)
+
+(test-equal
+ (judgment-holds
+  (ty-is-pod ,test-srs (struct A [])))
+ #t)
+
+(test-equal
+ (judgment-holds
+  (ty-is-pod ,test-srs (struct E [])))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2187,6 +2195,21 @@
    (can-move-from srs T Λ ℜ lv)
    --------------------------------------------------
    (can-move-from srs T Λ ℜ (* lv))]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-read-from
+;;
+;; FIXME
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-read-from I   I I I I )
+  #:contract (can-read-from srs T Λ ℜ lv)
+
+  [--------------------------------------------------
+   (can-read-from srs T Λ ℜ lv)]
 
   )
 
@@ -2363,6 +2386,48 @@
    (subtype Λ ty_a ty_f) ...
    --------------------------------------------------
    (rv-ok srs T Λ ℜ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) ℑ_a ℜ)]
+
+  ;; int
+  [--------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ number int ℑ ℜ)]
+
+  ;; lv + lv
+  [(can-read-from srs T Λ ℜ lv_1)
+   (can-read-from srs T Λ ℜ lv_2)
+   (where int (lvtype srs T lv_1))
+   (where int (lvtype srs T lv_2))
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (lv_1 + lv_2) int ℑ ℜ)]
+
+  ;; (Some lv)
+  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty] ℑ_1)
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (Some lv) (Option ty) ℑ_1 ℜ)]
+
+  ;; (None ty)
+  [;; check ty well-formed
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (None ty) (Option ty) ℑ ℜ)]
+
+  ;; (vec ty lv ...)
+  [;; check ty well-formed
+   (where l (size [lv ...]))
+   (use-lvs-ok srs T Λ ℜ ℑ [lv ...] [ty_lv ...] ℑ_1)
+   (subtype Λ ty_lv ty) ...
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (vec ty lv ...) (vec ty l) ℑ_1 ℜ)]
+
+  ;; (vec-len lv ...)
+  [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
+   (can-read-from srs T Λ ℜ lv)
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (vec-len lv) int ℑ ℜ)]
+
+  ;; (pack lv ty)
+  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty] ℑ_1)
+   --------------------------------------------------
+   (rv-ok srs T Λ ℜ ℑ (pack lv ty) ty ℑ_1 ℜ)]
+
 
   )
 
