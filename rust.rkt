@@ -26,7 +26,7 @@
   (bk (block ℓ vdecls sts))
   ;; variable decls
   (vdecls [vdecl ...])
-  (vdecl (x : ty))
+  (vdecl (x ty))
   ;; statements:
   [sts (st ...)]
   (st (lv = rv)
@@ -106,8 +106,7 @@
   [V (vmap ...)]
   [vmap ((x α) ...)]
   ;; T : a map from names to types
-  [T (tmap ...)]
-  [tmap ((x ty) ...)]
+  [T (vdecls ...)]
   ;; S (stack) : stack-frames contain pending statements
   [S (sf ...)]
   [sf (ℓ sts)]
@@ -210,7 +209,7 @@
 ;; simple test prog that assigns to the result pointer
 
 (define twentytwo-main
-  (term (fun main [a] [(outp : (& a mut int))]
+  (term (fun main [a] [(outp (& a mut int))]
              (block l0 [] [((* outp) = 22)]))))
 
 (check-not-false (redex-match Patina-machine fn twentytwo-main))
@@ -231,12 +230,12 @@
 (check-not-false (redex-match Patina-machine srs sum-srs))
 
 (define sum-main
-  (term (fun main [a] [(outp : (& a mut int))]
-             (block l0 [(i : int)
-                        (n : (Option (~ (struct List []))))
-                        (s : (struct List []))
-                        (l : (~ (struct List [])))
-                        (p : (& l0 imm (struct List [])))]
+  (term (fun main [a] [(outp (& a mut int))]
+             (block l0 [(i int)
+                        (n (Option (~ (struct List []))))
+                        (s (struct List []))
+                        (l (~ (struct List [])))
+                        (p (& l0 imm (struct List [])))]
                     [(i = 22)
                      (n = (None (~ (struct List []))))
                      (s = (struct List [] (i n)))
@@ -267,18 +266,18 @@
 ;;     }
 ;; }
 (define sum-sum_list
-  (term (fun sum_list [a b] [(inp : (& a imm (struct List [])))
-                             (outp : (& b mut int))]
+  (term (fun sum_list [a b] [(inp (& a imm (struct List [])))
+                             (outp (& b mut int))]
              (block l0
-                    [(r : int)]
+                    [(r int)]
                     [(r = (copy ((* inp) · 0)))
                      (match ((* inp) · 1)
                        (Some (ref imm) next1 =>
-                             (block l1 [(next2 : (& l1 imm (struct List [])))
-                                        (b : int)]
+                             (block l1 [(next2 (& l1 imm (struct List [])))
+                                        (b int)]
                                     [(next2 = (& l1 imm (* (* next1))))
                                      (b = 0)
-                                     (block l2 [(c : (& l1 mut int))]
+                                     (block l2 [(c (& l1 mut int))]
                                             [(c = (& l2 mut b))
                                              (call sum_list [l1 l2] [next2 c])
                                              ((* outp) = (r + b))])]))
@@ -307,14 +306,14 @@
 
 ;; gonna be super tedious...
 (define dst-main
-  (term (fun main [a] [(outp : (& a mut int))]
-             (block l0 [(i1 : int)
-                        (i2 : int)
-                        (i3 : int)
-                        (v : (vec int 3))
-                        (rd3 : (struct RCDataInt3 []))
-                        (rd3p : (& l0 imm (struct RCDataInt3 [])))
-                        (rdNp : (& l0 imm (struct RCDataIntN [])))
+  (term (fun main [a] [(outp (& a mut int))]
+             (block l0 [(i1 int)
+                        (i2 int)
+                        (i3 int)
+                        (v (vec int 3))
+                        (rd3 (struct RCDataInt3 []))
+                        (rd3p (& l0 imm (struct RCDataInt3 [])))
+                        (rdNp (& l0 imm (struct RCDataIntN [])))
                         ]
                     [(i1 = 22)
                      (i2 = 23)
@@ -607,7 +606,7 @@
   
   [(fun-defn (fn_0 fn_1 ...) g)
    fn_0
-   (where (fun g ℓs ((x : ty) ...) bk) fn_0)]
+   (where (fun g ℓs ((x ty) ...) bk) fn_0)]
 
   [(fun-defn (fn_0 fn_1 ...) g)
    (fun-defn (fn_1 ...) g)])
@@ -1643,7 +1642,7 @@
 ;; also removes memory used by those variables
 
 (define-metafunction Patina-machine
-  free-variables : srs H vmap tmap -> H
+  free-variables : srs H vmap vdecls -> H
 
   [(free-variables srs H () ()) H]
   [(free-variables srs
@@ -1674,10 +1673,10 @@
 ;; filling the memory with void
 
 (define-metafunction Patina-machine
-  alloc-variables : srs H ((x : ty) ...) -> (vmap tmap H)
+  alloc-variables : srs H ((x ty) ...) -> (vmap vdecls H)
 
   [(alloc-variables srs H ()) (() () H)]
-  [(alloc-variables srs H ((x_0 : ty_0) (x_1 : ty_1) ...))
+  [(alloc-variables srs H ((x_0 ty_0) (x_1 ty_1) ...))
    (((x_0 α_0) (x_2 α_2) ...)
     ((x_0 ty_0) (x_2 ty_2) ...)
     H_2)
@@ -1685,14 +1684,14 @@
    (where (H_1 α_0) (malloc H z))
    (where (((x_2 α_2) ...)
            ((x_2 ty_2) ...)
-           H_2) (alloc-variables srs H_1 ((x_1 : ty_1) ...)))])
+           H_2) (alloc-variables srs H_1 ((x_1 ty_1) ...)))])
 
 ;; this should free up all memory but that which pertains to `i` and `p`,
 ;; as well as `97` and `98` which are marked as 'static'
 (test-equal (term (alloc-variables ,test-srs
                                    ,test-H
-                                   ((j : int)
-                                    (k : (struct B (static))))))
+                                   ((j int)
+                                    (k (struct B (static))))))
             (term (((j 100) (k 101))
                    ((j int) (k (struct B (static))))
                    ,(append (term ((102 void) (101 void) (100 void)))
@@ -1740,10 +1739,10 @@
    Patina-machine
    
    ;; Stack frame with no more statements. Free variables.
-   [--> ((srs fns) H [vmap_0 vmap_1 ...] [tmap_0 tmap_1 ...]
+   [--> ((srs fns) H [vmap_0 vmap_1 ...] [vdecls_0 vdecls_1 ...]
          [(ℓ ()) sf_1 ...])
-        ((srs fns) H_1 [vmap_1 ...] [tmap_1 ...] [sf_1 ...])
-        (where H_1 (free-variables srs H vmap_0 tmap_0))]
+        ((srs fns) H_1 [vmap_1 ...] [vdecls_1 ...] [sf_1 ...])
+        (where H_1 (free-variables srs H vmap_0 vdecls_0))]
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
    ;; but not initialized.
@@ -1760,7 +1759,7 @@
 
    ;; Match, None case.
    [--> ((srs fns) H V T [(ℓ [st_a st ...]) sf ...])
-        ((srs fns) H [() vmap ...] [() tmap ...] [(ℓ_m [bk_n]) (ℓ [st ...]) sf ...])
+        ((srs fns) H [() vmap ...] [() vdecls ...] [(ℓ_m [bk_n]) (ℓ [st ...]) sf ...])
         ;; st_a is some kind of match:
         (where (match lv_d (Some mode x_d => bk_s) (None => bk_n)) st_a)
         ;; the discriminant lies at address α_d:
@@ -1770,7 +1769,7 @@
         ;; generate a fresh lifetime: (FIXME)
         (where ℓ_m lmatch)
         ;; unpack V and T
-        (where ([vmap ...] [tmap ...]) (V T))
+        (where ([vmap ...] [vdecls ...]) (V T))
         ]
 
    ;; Match, some case.
@@ -1790,27 +1789,27 @@
         (where ℓ_m lmatch)
         ;; handle the ref/move into `x_m`:
         (where (H_m ty_m α_m) (unwrap srs H ℓ_m mode ty α_v))
-        ;; create new entry for vmap/tmap
+        ;; create new entry for vmap/vdecls
         (where vmap_m [(x_m α_m)])
-        (where tmap_m [(x_m ty_m)])
+        (where vdecls_m [(x_m ty_m)])
         ;; unpack V and T
-        (where ([vmap ...] [tmap ...]) (V T))
-        (where C_n ((srs fns) H_m [vmap_m vmap ...] [tmap_m tmap ...]
+        (where ([vmap ...] [vdecls ...]) (V T))
+        (where C_n ((srs fns) H_m [vmap_m vmap ...] [vdecls_m vdecls ...]
          [(ℓ_m [bk_s]) (ℓ [st ...]) sf ...]))
         ]
 
    ;; Push a new block.
-   [--> ((srs fns) H (vmap ...) (tmap ...)
+   [--> ((srs fns) H (vmap ...) (vdecls ...)
          [sf_1 sf_2 ...])
-        ((srs fns) H_1  [vmap_b vmap ...] [tmap_b tmap ...]
+        ((srs fns) H_1  [vmap_b vmap ...] [vdecls_b vdecls ...]
          [sf_b (ℓ_1 [st_1 ...]) sf_2 ...])
 
         ;; unpack the top-most stack frame sf_1:
         (where (ℓ_1 [st_0 st_1 ...]) sf_1)
         ;; unpack the next statement st_0, which should be a block:
-        (where (block ℓ_b [(x_b : ty_b) ...] [st_b ...]) st_0)
+        (where (block ℓ_b vdecls_b [st_b ...]) st_0)
         ;; allocate space for block svariables in memory:
-        (where (vmap_b tmap_b H_1) (alloc-variables srs H ((x_b : ty_b) ...)))
+        (where (vmap_b vdecls_b H_1) (alloc-variables srs H vdecls_b))
         ;; create new stack frame for block
         ;; FIXME substitute a fresh lifetime for ℓ_b
         (where sf_b (ℓ_b (st_b ...)))
@@ -1818,11 +1817,11 @@
 
    ;; Push a call.
    [--> ((srs fns) H V T S)
-        ((srs fns) H_2 [vmap_a vmap ...] [tmap_a tmap ...]
+        ((srs fns) H_2 [vmap_a vmap ...] [vdecls_a vdecls ...]
          [(lX (bk_f)) (ℓ_1 [st_r ...]) sf_r ...])
 
         ;; unpack V and T for later expansion
-        (where ([vmap ...] [tmap ...]) (V T))
+        (where ([vmap ...] [vdecls ...]) (V T))
         ;; unpack the stack frames:
         (where [(ℓ_1 sts_1) sf_r ...] S)
         ;; unpack the statements sts_1 from top-most activation:
@@ -1837,12 +1836,13 @@
         (where αs_a ,(map (λ (lv) (term (lvaddr srs H V T ,lv)))
                               (term lvs_a)))
         ;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
-        (where (fun g ℓs_f ((x_f : ty_f) ...) bk_f) (fun-defn fns g))
+        (where (fun g ℓs_f vdecls_f bk_f) (fun-defn fns g))
         ;; allocate space for parameters in memory:
-        (where (vmap_a tmap_a H_1) (alloc-variables srs H ((x_f : ty_f) ...)))
+        (where (vmap_a vdecls_a H_1) (alloc-variables srs H vdecls_f))
         ;; determine addresses for each formal argument:
+        (where ((x_f ty_f) ...) vdecls_f)
         (where βs_f ,(map (λ (lv) (term (lvaddr srs H_1
-                                                        (vmap_a) (tmap_a)
+                                                        (vmap_a) (vdecls_a)
                                                         ,lv)))
                              (term (x_f ...))))
         ;; move from actual params into formal params:
@@ -1875,7 +1875,8 @@
                 [[(a 0)]]
                 [[(a int)]]
                 [(l1 [(block l2
-                             [(b : int) (c : (~ int))]
+                             [(b int)
+                              (c (~ int))]
                              [(i = 2)
                               (j = (new i))])])]))
           (term (,twentytwo-prog
@@ -2502,5 +2503,27 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ ℜ ℑ (lv = rv) (lv lv_rv ...) ℜ_rv)]
 
+  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty] ℑ_1)
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ ℜ ℑ (free lv) ℑ_1 ℜ)]
+
+;;   [(bk-ok prog T_1 Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)
+;;    --------------------------------------------------
+;;    (st-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
+
   )
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; bk-ok
+;; 
+;; (define-judgment-form
+;;   Patina-typing
+;;   #:mode     (bk-ok I    I I I I I  O O)
+;;   #:contract (bk-ok prog T Λ ℜ ℑ bk ℑ ℜ)
+;; 
+;;   [(where [vdecls_0 ...] T)
+;;    (where T_1 [vdecls_1 vdecls_0 ...])
+;;    --------------------------------------------------
+;;    (bk-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
+;; 
+;;   )
