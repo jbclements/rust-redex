@@ -6,6 +6,10 @@
 ;; \gamma -> γ
 ;; \cdot  -> ·
 ;; \ell   -> ℓ
+;; \in    -> ∈
+;; \notin -> ∉
+;; and so on
+;; lifetime-≤
 
 #lang racket
 
@@ -406,6 +410,12 @@
   [(∃ []) #f]
   [(∃ [#t any ...]) #t]
   [(∃ [#f any ...]) (∃ [any ...])]
+  )
+
+(define-metafunction Patina-machine
+  ∄ : [any ...] -> boolean
+
+  [(∄ any) (not (∃ any))]
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2304,11 +2314,8 @@
   [;; Can only move from things we own:
    (owned-path srs ty lv)
 
-   ;; Must be initialized:
-   (lv-initialized ℑ lv)
-
-   ;; Cannot be loaned out:
-   (unencumbered £ lv)
+   ;; Otherwise same as write:
+   (can-write-to srs T Λ £ ℑ lv) 
    --------------------------------------------------
    (can-move-from srs T Λ £ ℑ lv)]
 
@@ -2343,177 +2350,222 @@
    (where (~ ty) (lvtype srs T lv))]
   
   [(owned-subpaths1 srs T lv)
-   [(lv @ XXX)]
-   (where (vec ty olen) (lvtype srs T lv))]
-  
-  [(owned-subpaths1 srs T lv)
    []]
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; restricted-paths
+;;
+;; If a loan affects the lvalue `lv`, this function returns a set of
+;; paths for `lv` that are *restricted* as a result. A path is
+;; restricted if accessing it would violate the terms of the loan.
+;;
+;; More concretely, for a mutable loan of `lv`, `restricted-paths lv`
+;; yields the set of paths that cannot be read or written as a result.
+;; This includes not only `lv` itself but base paths of `lv`, because
+;; reading those paths would either copy `lv` (as part of a larger
+;; copy) or else create a second path to the same memory that was
+;; borrowed. Similar concerns hold for writing.
 
 (define-metafunction Patina-machine
-  restricted-paths : srs T Λ lv -> restrs
+  paths-restricted-by-loan-of : srs T lv -> lvs
 
-  [(loan-restrictions srs T Λ (ℓ imm lv))
-   ;; If &lv is in scope, requires that lv not be mutated nor &mut
-   ;; borrowed:
-   (restrictions srs T Λ lv ℓ [(borrow mut)
-                               (access mut)])
+  [(paths-restricted-by-loan-of srs T x)
+   [x]
    ]
 
-  [(loan-restrictions srs T Λ (ℓ mut lv))
-   ;; If &mut lv is in scope, requires that lv not be accessed in any
-   ;; way:
-   (restrictions srs T Λ lv ℓ [(borrow imm)
-                               (borrow mut)
-                               (access imm)
-                               (access mut)])
-   ]
-  )
-
-(define-metafunction Patina-machine
-  restrictions : srs T Λ lv ℓ actions -> restrs
-
-  [(restrictions srs T Λ x ℓ actions)
-   ([(x actions)])
+  [(paths-restricted-by-loan-of srs T (lv · f))
+   [(lv · f) (paths-restricted-by-loan-of srs T Λ lv) ...]
    ]
 
-  [(restrictions srs T Λ (lv · f) ℓ actions)
-   ([((lv · f) actions) restrs ...])
-   (where [restrs ...] (restrictions srs T Λ lv ℓ actions))
+  [(paths-restricted-by-loan-of srs T (lv_a @ lv_i))
+   [(lv_a @ lv_i) (paths-restricted-by-loan-of srs T Λ lv_a) ...]
    ]
 
-  ;; Dereference of a ~T pointer:
-  [(restrictions srs T Λ (* lv) ℓ actions)
-   ([((lv · f) actions) restrs ...])
+  [(paths-restricted-by-loan-of srs T (* lv))
+   [(* lv) (paths-restricted-by-loan-of srs T Λ lv_a) ...]
    (where (~ ty) (lvtype srs T lv))
-
-   ;; Pointer cannot be mutated in any way or else memory will be freed.
-   (where actions_1 (∪ actions [(access mut) (borrow mut)]))
-   (where [restrs ...] (restrictions srs T Λ lv ℓ actions_1))
    ]
 
-  ;; Dereference of an &T pointer:
-  [(restrictions srs T Λ (* lv) ℓ actions)
-   ([((* lv) actions)])
-   (where (& ℓ_lv imm ty) (lvtype srs T lv))
-
-   ;; &T pointer must outlive the loan.
-   (side-condition (term (sublifetime Λ ℓ ℓ_lv)))
-
-   ;; Note: mutability constraints are checked via the separate
-   ;; MUTABILITY check.
+  ;; If we borrowed `*x` and `x` is a `&T`, that need not prevent us
+  ;; from reading (or writing) `x`. I would eventually like to extend
+  ;; this rule to handle writes to &mut borrowed lvalues too, but that
+  ;; needs a bit more infrastructure and for time being I want to
+  ;; model what rustc currently allows (or should allow).
+  [(paths-restricted-by-loan-of srs T (* lv))
+   [(* lv)]
+   (where (& ℓ imm ty) (lvtype srs T lv))
    ]
 
-  ;; Dereference of an &mut T pointer:
-  [(restrictions srs T Λ (* lv) ℓ actions)
-   ([((* lv) actions) restrs ...])
-   (where (& ℓ_lv mut ty) (lvtype srs T lv))
-
-   ;; &mut T pointer must outlive the loan.
-   (side-condition (term (sublifetime Λ ℓ ℓ_lv)))
-
-   (where [restrs ...] (restrictions srs T Λ lv ℓ actions))
+  [(paths-restricted-by-loan-of srs T (* lv))
+   [(* lv) (paths-restricted-by-loan-of srs T Λ lv_a) ...]
+   (where (& ℓ mut ty) (lvtype srs T lv))
    ]
 
   )
+
+(define-metafunction Patina-machine
+  paths-restricted-by-loans : srs T £ -> lvs
+
+  [(paths-restricted-by-loans srs T [(ℓ mq lv) ...])
+   ,(flatten (term [(paths-restricted-by-loan-of srs T Λ lv) ...]))])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; unique-path srs T lv
+;; path-unique-for srs T Λ ℓ lv
 ;;
-;; Holds if the path `lv` is a *unique path*, meaning that it is the only
-;; path that leads to that particular address which is currently accessible,
-;; assuming that `lv` itself is not borrowed.
+;; Holds if the path `lv` is a *unique path* during the lifetime ℓ.
+;; This means that, during the lifetime ℓ, `lv` is the only
+;; *accessible* path that would evaluate to that particular address.
 
 (define-judgment-form
   Patina-typing
-  #:mode     (unique-path I   I I )
-  #:contract (unique-path srs T lv)
+  #:mode     (path-unique-for I   I I I I )
+  #:contract (path-unique-for srs T Λ ℓ lv)
 
   [--------------------------------------------------
-   (unique-path srs T x)]
+   (path-unique-for srs T Λ ℓ x)]
 
-  [(unique-path srs T lv)
+  [(path-unique-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (unique-path srs T (lv · f))]
+   (path-unique-for srs T Λ ℓ (lv · f))]
 
-  [(unique-path srs T lv)
+  [(path-unique-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (unique-path srs T (lv @ lv_1))]
+   (path-unique-for srs T Λ ℓ (lv @ lv_1))]
 
   [(where (~ ty) (lvtype srs T lv))
-   (unique-path srs T lv)
+   (path-unique-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (unique-path srs T (* lv))]
+   (path-unique-for srs T Λ ℓ (* lv))]
 
-  [(where (& ℓ mut ty) (lvtype srs T lv))
-   (unique-path srs T lv)
+  [(where (& ℓ' mut ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ')
+   (path-unique-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (unique-path srs T (* lv))]
+   (path-unique-for srs T Λ ℓ (* lv))]
 
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; restr-permits action restr lv
-;; restrs-permit action restrs lv
+;; path-freezable-for srs T Λ ℓ lv
 ;;
-;; Holds if the restriction `restr` permits the action `action` on `lv`.
+;; Holds if the path `lv` is a *freezable path* during the lifetime ℓ.
+;; I am not quite sure how best to phrase this predicate in English.
+;; Roughly speaking, the path-freezable-for predicte guarantees that the
+;; memory which `lv` evaluates to will not be mutated during the
+;; lifetime ℓ, assuming that the path `lv` is not itself assigned to
+;; (if that is even possible). Often this corresponds to the underlying
+;; memory referenced by `lv` but not always.
+;;
+;; Here are some interesting and representative examples:
+;;
+;; 1. `fn foo(x: &'a &'b mut T) -> &'a T { &**x }`
+;;
+;;     This example is legal because the path **x is freezable-for the
+;;     lifetime 'a. If however the return type were `&'b T`, the
+;;     example would be an error, because `**x` is not freezable-for
+;;     'b. This is true *even though* we know that the memory will not yet
+;;     be freed.
+;;
+;;     The reason is that, so long as the `&mut` *x is considered
+;;     aliased, it cannot be changed. But that alias expires after 'a,
+;;     and hence the memory in 'b would be considered mutable
+;;     again.
+;;
+;; 2. `fn foo(x: &'a mut T) -> &'a T { &*x }`
+;;
+;;     In this case, the path `*x` is freezable-for the lifetime `'a`.
+;;     The reason is that `x` is the only pointer that can mutate `*x`
+;;     during the lifetime `'a`, and hence if we freeze `*x` we can be
+;;     sure that the memory will not change until after `'a`.
+;;
+;; 3. `fn foo() -> &'a int { let x = 3; &x }`
+;;
+;;     Naturally, this case yields an error, but NOT because of
+;;     freezable-for. This is crucial to the previous two examples, in
+;;     fact. The idea here is that while the memory pointed at by `x`
+;;     isn't valid for the entire lifetime 'a, if we ignore memory
+;;     reuse, we can still say that it won't be assigned to. I'm not
+;;     sure how best to express this part in English. Maybe this rule
+;;     can be made more tidy. In any case, there is another predicate
+;;     `path-outlives` that would catch this sort of error.
 
 (define-judgment-form
   Patina-typing
-  #:mode     (restr-permits I      I     I )
-  #:contract (restr-permits action restr lv)
+  #:mode     (path-freezable-for I   I I I I )
+  #:contract (path-freezable-for srs T Λ ℓ lv)
 
-  [(side-condition (∉ action actions))
+  [--------------------------------------------------
+   (path-freezable-for srs T Λ ℓ x)]
+
+  [(path-freezable-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (restr-permits action (lv_1 ℓ actions) lv_0)]
+   (path-freezable-for srs T Λ ℓ (lv · f))]
 
-  [(side-condition (≠ lv_0 lv_1))
+  [(path-freezable-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (restr-permits action (lv_1 ℓ actions) lv_0)]
+   (path-freezable-for srs T Λ ℓ (lv @ lv_1))]
 
-  )
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (restrs-permit I      I      I )
-  #:contract (restrs-permit action restrs lv)
-
-  [(restr-permits action restr lv) ...
+  [(where (~ ty) (lvtype srs T lv))
+   (path-freezable-for srs T Λ ℓ lv)
    --------------------------------------------------
-   (restrs-permit action [restr ...] lv)]
+   (path-freezable-for srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ' mut ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ')
+   (path-freezable-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ' imm ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ')
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (* lv))]
 
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; loan-permits action loan lv
-;; loans-permit action loans lv
-;;
-;; Holds if the loan `loan` (resp. loans `loans`) permits
-;; (resp. permit) the action `action` on `lv`.
+;; can-access
 
 (define-judgment-form
   Patina-typing
-  #:mode     (loan-permits I      I   I  I I    I )
-  #:contract (loan-permits action srs ty Λ loan lv)
+  #:mode     (can-access I   I I I I I )
+  #:contract (can-access srs T Λ £ ℑ lv)
 
-  [(where restrs (loan-restrictions srs ty Λ loan))
-   (restrs-permit action restrs lv)
+  [;; Data must be initialized:
+   (lv-initialized ℑ (owning-path srs T lv))
+
+   ;; The path lv cannot be restricted by a loan:
+   ;;
+   ;; This covers cases like these:
+   ;;
+   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
+   ;;    a.b = ...;          // would overwrite c as part
+   ;;
+   ;;    let x = &a.b.c;     // restricts a, a.b, and a.b.c
+   ;;    a.b = ...;          // would overwrite c as part
+   ;;
+   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
+   ;;    let y = a.b;        // would read c as part
+   (where [lv_r ...] (paths-restricted-by-loans srs T £_l))
+   (side-condition (∉ lv lv_r))
+
+   ;; Neither the path lv nor any base path of lv can be borrowed:
+   ;;
+   ;; This covers cases like this:
+   ;;
+   ;;    let x = &mut a;
+   ;;    a.b = ...;          // would overwrite part of a
+   ;;
+   ;;    let x = &a;
+   ;;    a.b = ...;          // would overwrite part of a
+   ;;
+   ;;    let x = &mut a;
+   ;;    let y = a.b;        // would read part of a
+   (where [lv_b ...] (path-and-base-paths lv))
+   (unencumbered £_l lv_b) ...
    --------------------------------------------------
-   (loan-permits action srs ty Λ loan lv)]
-
-  )
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (loans-permit I      I   I  I I     I )
-  #:contract (loans-permit action srs ty Λ loans lv)
-
-  [(loan-permits action srs ty Λ loan lv) ...
-   --------------------------------------------------
-   (loans-permit action srs ty Λ [loan ...] lv)]
+   (can-access srs T Λ £_l ℑ lv)]
 
   )
 
@@ -2525,52 +2577,10 @@
   #:mode     (can-read-from I   I I I I I )
   #:contract (can-read-from srs T Λ £ ℑ lv)
 
-  [;; Data must be initialized:
-   (lv-initialized ℑ (owning-path srs T lv))
-
-   ;; FIXME what about
-   ;; let x = &mut a.b.c;
-   ;; v = a.b;
-   ;; this is where restrictions came into play, but a simpler
-   ;; way to consider this is to say that the path
-   ;; a.b is (at least PARTIALLY) ENCUMBERED by a loan.
-
-   ;; No base path can be mut-loaned:
-   (where [lv_b ...] (path-and-base-paths lv))
-   (unencumbered (mut-loans £) lv_b) ...
+  [;; Only mutable loans prevent reads:
+   (can-access srs T Λ (mut-loans £) ℑ lv)
    --------------------------------------------------
    (can-read-from srs T Λ £ ℑ lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-borrow-from
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-borrow-from I   I I I I I )
-  #:contract (can-borrow-from srs T Λ £ ℑ lv)
-
-  [;; Data must be initialized:
-   (lv-initialized ℑ (owning-path srs T lv))
-
-   ;; Data cannot have a lifetime shorter than the loan ℓ:
-   (where ty (lvtype srs T lv))
-   (lifetime-in-scope Λ ℓ)
-   (lifetime-bound Λ ℓ ty)
-   
-   ;; FIXME what about
-   ;; let x = &mut a.b.c;
-   ;; v = a.b;
-   ;; this is where restrictions came into play, but a simpler
-   ;; way to consider this is to say that the path
-   ;; a.b is (at least PARTIALLY) ENCUMBERED by a loan.
-
-   ;; No base path can be mut-loaned:
-   (where [lv_b ...] (path-and-base-paths lv))
-   (unencumbered (mut-loans £) lv_b) ...
-   --------------------------------------------------
-   (can-borrow-from srs T Λ £ ℑ lv)]
 
   )
 
@@ -2582,22 +2592,8 @@
   #:mode     (can-write-to I   I I I I I )
   #:contract (can-write-to srs T Λ £ ℑ lv)
 
-  [;; Data must be initialized:
-   (lv-initialized ℑ (owning-path srs T lv))
-
-   ;; FIXME what about
-   ;; let x = &a.b.c;
-   ;; a.b = ...;
-   ;; this is where restrictions came into play, but a simpler
-   ;; way to consider this is to say that the path
-   ;; a.b is (at least PARTIALLY) ENCUMBERED by a loan.
-   ;;
-   ;; remember that &(*b).x where b is &T, doesn't (necessarily) have
-   ;; to prevent b = foo!
-
-   ;; No base path can be loaned in any form:
-   (where [lv_b ...] (path-and-base-paths lv))
-   (unencumbered £ lv_b) ...
+  [;; All loans prevent writes:
+   (can-access srs T Λ £ ℑ lv)
    --------------------------------------------------
    (can-write-to srs T Λ £ ℑ lv)]
 
@@ -2608,21 +2604,87 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode     (can-write-to I   I I I I I )
-  #:contract (can-write-to srs T Λ £ ℑ lv)
+  #:mode     (can-write-to I   I I I I )
+  #:contract (can-write-to srs T Λ ℑ lv)
 
-  [(owned-path srs T lv)
-
-   ;; Data must not yet be initialized:
-   (lv-not-initialized ℑ lv)
-
-   ;; No need to check for base path loans, since
-   ;; we cannot loan out a partially initialized path.
-   ;;
-   ;; (where [lv_b ...] (path-and-base-paths lv))
-   ;; (unencumbered £ lv_b) ...
+  [(lv-not-initialized ℑ x)
    --------------------------------------------------
-   (can-write-to srs T Λ £ ℑ lv)]
+   (can-init srs T Λ ℑ x)]
+
+  [(lv-initialized ℑ lv)
+   (lv-not-initialized ℑ (lv · f))
+   --------------------------------------------------
+   (can-init srs T Λ ℑ (lv · f))]
+
+  [(lv-initialized ℑ lv)
+   (lv-not-initialized ℑ (* lv))
+   (where (~ ty) (lvtype srs T lv))
+   --------------------------------------------------
+   (can-init srs T Λ ℑ (* lv))]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-outlives
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (path-outlives I   I I I I )
+  #:contract (path-outlives srs T Λ ℓ lv)
+
+  [;; At present, we require that the borrow be for some lifetime that
+   ;; is in scope. I'd like to lift this requirement in the future,
+   ;; though I can't recall just what gets more complicated as a
+   ;; result!
+   (lifetime-in-scope Λ ℓ)
+
+   ;; Determine from the path whether we be sure that the path outlives ℓ.
+   (path-bound-by-lifetime srs T Λ ℓ lv)
+
+   ;; Data cannot have a lifetime shorter than the loan ℓ.
+   ;;
+   ;; FIXME I feel like this check is unnecessary and implied by other
+   ;; requirements. In other words, the memory has an ultimate local
+   ;; variable in a block with lifetime ℓ, and presumably we wouldn't
+   ;; allow that owner to gain access to data with some lifetime less
+   ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
+   ;; to allow data to be borrowed for a lifetime not currently in
+   ;; scope, actually.)
+   (where ty (lvtype srs T lv))
+   (ty-bound-by-lifetime Λ ℓ ty)
+   --------------------------------------------------
+   (path-outlives srs T Λ £_l ℑ lv)]
+
+  )
+
+;; Holds if the memory directly referenced by `lv`
+;; will outlive `ℓ`.
+(define-judgment-form
+  Patina-typing
+  #:mode     (path-bound-by-lifetime I   I I I I )
+  #:contract (path-bound-by-lifetime srs T Λ ℓ lv)
+
+  [;; FIXME must determine lifetime of x, currently not found in any map
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ x)]
+
+  [(path-bound-by-lifetime srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (lv · f))]
+
+  [(path-bound-by-lifetime srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (lv @ lv_i))]
+
+  [(where (~ ty) (lvtype srs T lv))
+   (path-bound-by-lifetime srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ_lv mq ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
 
   )
 
@@ -2699,16 +2761,19 @@
    --------------------------------------------------
    (rv-ok srs T Λ £ ℑ lv ty_out £ ℑ_out)]
 
-  ;; & ℓ mq lv
-  [(can-borrow-from srs T Λ ℑ (mut-loans £) mq lv)
+  ;; & ℓ imm lv
+  [(can-read-from srs T Λ ℑ (mut-loans £) mq lv)
+   (path-freezable-for srs T Λ ℓ lv)
+   (path-outlives srs T Λ ℓ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (& ℓ mq lv) (& ℓ imm ty) ℑ (∪ £ [ℓ mq lv]))]
+   (rv-ok srs T Λ £ ℑ (& ℓ imm lv) (& ℓ imm ty) ℑ (∪ £ [ℓ mq lv]))]
 
-  ;; & ℓ mq lv
-  [(can-borrow-from srs T Λ ℑ £ mq lv)
-   (unique-path srs T mq lv)
+  ;; & ℓ mut lv
+  [(can-write-to srs T Λ ℑ (mut-loans £) mq lv)
+   (path-unique-for srs T Λ ℓ lv)
+   (path-outlives srs T Λ ℓ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (& ℓ mq lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mq lv]))]
+   (rv-ok srs T Λ £ ℑ (& ℓ mut lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mq lv]))]
 
   ;; struct s ℓs [lv ...]
   [(where [ty_f ...] (field-tys srs s [ℓ ...]))
@@ -2823,16 +2888,21 @@
   #:mode     (st-ok I    I I I I I  O O)
   #:contract (st-ok prog T Λ £ ℑ st ℑ £)
 
-  [(rv-ok srs T Λ £ ℑ rv ty_rv (lv_rv ...) £_rv)
-   (permit (access mut) ℜ_rv lv)
+  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
+   (can-init srs T Λ ℑ_rv lv)
    (subtype Λ ty_rv (lvtype srs T lv))
-   (side-condition (lv-not-initialied ℑ lv))
    --------------------------------------------------
-   (st-ok (srs fns) T Λ ℜ ℑ (lv = rv) (lv lv_rv ...) ℜ_rv)]
+   (st-ok (srs fns) T Λ £ ℑ (lv = rv) £_rv (∪ ℑ_rv [lv]))]
 
-  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty] ℑ_1)
+  [(rv-ok srs T Λ £ ℑ rv ty_rv (lv_rv ...) £_rv ℑ_rv)
+   (can-write-to srs T Λ £_rv ℑ_rv lv)
+   (subtype Λ ty_rv (lvtype srs T lv))
    --------------------------------------------------
-   (st-ok (srs fns) T Λ ℜ ℑ (free lv) ℑ_1 ℜ)]
+   (st-ok (srs fns) T Λ ℜ ℑ (lv := rv) £_rv ℑ_rv)]
+
+  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ £ ℑ (free lv) £ ℑ_1)]
 
 ;;   [(bk-ok prog T_1 Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)
 ;;    --------------------------------------------------
