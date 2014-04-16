@@ -66,6 +66,7 @@
       (vec ty olen))
   ;; mq : mutability qualifier
   (mq mut imm)
+  (mqs [mq ...])
   ;; variables
   (x variable-not-otherwise-mentioned)
   ;; function names
@@ -440,6 +441,20 @@
   )
 
 (test-equal (term (∪ [1 4] [1 2 3])) (term [4 1 2 3]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ⊆ -- a metafunction for subseteq comparison
+
+(define-metafunction Patina-machine
+  ⊆ : [any ...] [any ...] -> boolean
+
+  [(⊆ [] [any ...]) #t]
+
+  [(⊆ [any_0 any_1 ...] [any_2 ...])
+   (and (∀ [∃ any_0 [any_2 ...]])
+        (⊆ [any_1 ...] [any_2 ...]))]
+
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ⊎ -- a metafunction for disjoint set union
@@ -963,13 +978,29 @@
 (test-equal (term (vtype ,test-T c)) (term (struct C (static))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; field-names -- determines the offsets of each field of a struct
+
+(define-metafunction Patina-machine
+  field-names : srs s ℓs -> fs
+  
+  [(field-names srs s ℓs)
+   ,(range (term z))
+   (where tys (field-tys srs s ℓs))
+   (where z (len tys))]
+
+  )
+
+(test-equal (term (field-tys ,test-srs C ()))
+            (term [0 1]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; field-offsets -- determines the offsets of each field of a struct
 
 (define-metafunction Patina-machine
   field-offsets : srs s ℓs -> zs
   
   [(field-offsets srs s ℓs)
-   (0 z ...)
+   (0 z ...) ;; FIXME need a prefix sum!
    (where (ty_a ... ty_z) (field-tys srs s ℓs))
    (where (z ...) [(sizeof srs ty_a) ...])]
 
@@ -1989,9 +2020,13 @@
           (borrow mq))
   (actions [action ...])
 
+  ;; in-scope loans
+  (loan (ℓ mq lv))
+  (£ [loan ...])
+
   ;; restrictions
-  (restr (lv ℓ actions))
-  (ℜ [restr ...])
+  (restr (lv actions))
+  (restrs [restr ...])
          
   )
 
@@ -2103,12 +2138,91 @@
   [(in-scope-lifetimes ((ℓ ℓs) ...)) (ℓ ...)])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; restricted-paths
+;; loaned-paths
 
 (define-metafunction Patina-typing
-  restricted-paths : ℜ -> lvs
+  loaned-paths : £ -> lvs
 
-  [(restricted-paths [(lv ℓ actions) ...]) (lv ...)])
+  [(loaned-paths [(ℓ mq lv) ...]) (lv ...)])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; owning-path srs ty lv -> lv
+;;
+;; Returns the largest owned prefix of `lv`. For example, if `lv` is
+;; `x.f`, then it would return `x.f`. If `lv` were `(*x).f`, then the
+;; result would either be `(*x).f` if `x` is an owned pointer (i.e.,
+;; `~T`), or `x` if `x` is a reference (e.g., `&T`).
+
+(define-metafunction Patina-typing
+  owning-path : srs ty lv -> lv
+
+  [(owning-path srs ty lv)
+   (owning-path1 srs ty lv lv)]
+
+  )
+
+;; Helper function. Second argument is the maximal owned path found so
+;; far.
+(define-metafunction Patina-typing
+  owning-path1 : srs T lv lv-> lv
+
+  [(owning-path1 srs T x lv_m) lv_m]
+
+  [(owning-path1 srs T (lv_0 · f) lv_m)
+   (owning-path1 srs T lv_0 lv_m)]
+
+  [(owning-path1 srs T (lv_0 @ lv_1) lv_m)
+   (owning-path1 srs T lv_0 lv_m)]
+
+  [(owning-path1 srs T (* lv_0) lv_m)
+   (owning-path1 srs T lv_0 lv_m)
+   (where (~ ty) (lvtype srs T lv_0))]
+
+  [(owning-path1 srs T (* lv_0) lv_m)
+   (owning-path1 srs T lv_0 lv_0)
+   (where (& ℓ mq ty) (lvtype srs T lv_0))]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-and-base-paths lv
+;;
+;; Given something like (*x).f, yields: [(*x).f, *x, x]
+
+(define-metafunction Patina-typing
+  path-and-base-paths : srs T lv -> lvs
+
+  [(path-and-base-paths srs T x)
+   [x]
+   ]
+
+  [(path-and-base-paths srs T (lv · f))
+   [(lv · f) (path-and-base-paths srs T lv) ...]
+   ]
+
+  [(path-and-base-paths srs T (lv_b @ lv_i))
+   [(lv_b @ lv_i) (path-and-base-paths srs T lv_b) ...]
+   ]
+
+  [(path-and-base-paths srs T (* lv))
+   [(* lv) (path-and-base-paths srs T lv) ...]
+   ]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; mut-loans £
+
+(define-metafunction Patina-typing
+  mut-loans : £ -> £
+
+  [(mut-loans [(ℓ imm lv) loan ...])
+   (mut-loans [loan ...])]
+
+  [(mut-loans [(ℓ mut lv) loan ...])
+   [(ℓ mut lv) loan_1 ...]
+   (where [loan_1 ...] (mut-loans [loan ...]))]
+  )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-in-scope Λ ℓ
@@ -2157,18 +2271,33 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; unrestricted ℜ lv
+;; unencumbered £ lv
 ;;
-;; True if there is no restriction that applies to lv.
+;; True if lv has not been loaned out.
 
 (define-judgment-form
   Patina-typing
-  #:mode     (unrestricted I I)
-  #:contract (unrestricted ℜ lv)
+  #:mode     (unencumbered I lv)
 
-  [(side-condition (∉ lv (restricted-paths ℜ)))
+  [(side-condition (∉ lv (loaned-paths £)))
    --------------------------------------------------
-   (unrestricted ℜ lv)]
+   (unencumbered £ lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; owned-path srs T lv
+;;
+;; Holds if the path `lv` is an *owned path*.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (owned-path I   I I )
+  #:contract (owned-path srs T lv)
+
+  [(where lv (owning-path srs T lv))
+   --------------------------------------------------
+   (owned-path srs T lv)]
 
   )
 
@@ -2177,72 +2306,127 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode     (can-move-from I   I I I I )
-  #:contract (can-move-from srs T Λ ℜ lv)
+  #:mode     (can-move-from I   I I I I I )
+  #:contract (can-move-from srs T Λ £ ℑ lv)
 
-  [(unrestricted ℜ x)
-   --------------------------------------------------
-   (can-move-from srs T Λ ℜ x)]
+  [;; Can only move from things we own:
+   (owned-path srs ty lv)
 
-  [(can-move-from srs T Λ ℜ lv)
-   --------------------------------------------------
-   (can-move-from srs T Λ ℜ (lv · f))]
+   ;; Must be initialized:
+   (lv-initialized ℑ lv)
 
-  [(can-move-from srs T Λ ℜ lv)
+   ;; Cannot be loaned out:
+   (unencumbered £ lv)
    --------------------------------------------------
-   (can-move-from srs T Λ ℜ (lv @ lv_1))]
-
-  [(where (~ ty) (lvtype srs T lv))
-   (can-move-from srs T Λ ℜ lv)
-   --------------------------------------------------
-   (can-move-from srs T Λ ℜ (* lv))]
+   (can-move-from srs T Λ £ ℑ lv)]
 
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-read-from
+;; owned-subpaths
 ;;
-;; FIXME
+;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
+;; as appropriate for the type of `lv`
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-read-from I   I I I I )
-  #:contract (can-read-from srs T Λ ℜ lv)
+(define-metafunction Patina-machine
+  owned-subpaths : srs T lv -> [lv ...]
+  
+  [(owned-subpaths srs T lv)
+   [lv lv_1 ... lv_2 ...]
+   (where [lv_1 ...] (owned-subpaths1 srs T lv))
+   (where [lv_2 ...] ,(flatten (term [(owned-subpaths1 srs T lv_1) ...])))
+   ]
+  )
 
-  [--------------------------------------------------
-   (can-read-from srs T Λ ℜ lv)]
+(define-metafunction Patina-machine
+  owned-subpaths1 : srs T lv -> [lv ...]
 
+  [(owned-subpaths1 srs T lv)
+   [(lv · f) ...]
+   (where (struct s ℓs) (lvtype srs T lv))
+   (where [f ...] (field-names srs s ℓs))]
+
+  [(owned-subpaths1 srs T lv)
+   [(* lv)]
+   (where (~ ty) (lvtype srs T lv))]
+  
+  [(owned-subpaths1 srs T lv)
+   [(lv @ XXX)]
+   (where (vec ty olen) (lvtype srs T lv))]
+  
+  [(owned-subpaths1 srs T lv)
+   []]
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; permits action restr lv
-;; permit  action ℜ     lv
+;; restrictions
 ;;
-;; Holds if the restriction `restr` permits the action `action` on `lv`.
+;; Yields the set of restrictions implied by a loan.
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (permits I      I     I )
-  #:contract (permits action restr lv)
+(define-metafunction Patina-machine
+  loan-restrictions : srs T Λ loan -> restrs
 
-  [(side-condition (∉ action actions))
-   --------------------------------------------------
-   (permits action (lv_1 ℓ actions) lv_0)]
+  [(loan-restrictions srs T Λ (ℓ imm lv))
+   ;; If &lv is in scope, requires that lv not be mutated nor &mut
+   ;; borrowed:
+   (restrictions srs T Λ lv ℓ [(borrow mut)
+                               (access mut)])
+   ]
 
-  [(side-condition (≠ lv_0 lv_1))
-   --------------------------------------------------
-   (permits action (lv_1 ℓ actions) lv_0)]
-
+  [(loan-restrictions srs T Λ (ℓ mut lv))
+   ;; If &mut lv is in scope, requires that lv not be accessed in any
+   ;; way:
+   (restrictions srs T Λ lv ℓ [(borrow imm)
+                               (borrow mut)
+                               (access imm)
+                               (access mut)])
+   ]
   )
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (permit I      I I )
-  #:contract (permit action ℜ lv)
+(define-metafunction Patina-machine
+  restrictions : srs T Λ lv ℓ actions -> restrs
 
-  [(permits action restr lv) ...
-   --------------------------------------------------
-   (permit action [restr ...] lv)]
+  [(restrictions srs T Λ x ℓ actions)
+   ([(x actions)])
+   ]
+
+  [(restrictions srs T Λ (lv · f) ℓ actions)
+   ([((lv · f) actions) restrs ...])
+   (where [restrs ...] (restrictions srs T Λ lv ℓ actions))
+   ]
+
+  ;; Dereference of a ~T pointer:
+  [(restrictions srs T Λ (* lv) ℓ actions)
+   ([((lv · f) actions) restrs ...])
+   (where (~ ty) (lvtype srs T lv))
+
+   ;; Pointer cannot be mutated in any way or else memory will be freed.
+   (where actions_1 (∪ actions [(access mut) (borrow mut)]))
+   (where [restrs ...] (restrictions srs T Λ lv ℓ actions_1))
+   ]
+
+  ;; Dereference of an &T pointer:
+  [(restrictions srs T Λ (* lv) ℓ actions)
+   ([((* lv) actions)])
+   (where (& ℓ_lv imm ty) (lvtype srs T lv))
+
+   ;; &T pointer must outlive the loan.
+   (side-condition (term (sublifetime Λ ℓ ℓ_lv)))
+
+   ;; Note: mutability constraints are checked via the separate
+   ;; MUTABILITY check.
+   ]
+
+  ;; Dereference of an &mut T pointer:
+  [(restrictions srs T Λ (* lv) ℓ actions)
+   ([((* lv) actions) restrs ...])
+   (where (& ℓ_lv mut ty) (lvtype srs T lv))
+
+   ;; &mut T pointer must outlive the loan.
+   (side-condition (term (sublifetime Λ ℓ ℓ_lv)))
+
+   (where [restrs ...] (restrictions srs T Λ lv ℓ actions))
+   ]
 
   )
 
@@ -2302,34 +2486,139 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; restrictions
+;; restr-permits action restr lv
+;; restrs-permit action restrs lv
 ;;
-;; FIXME
+;; Holds if the restriction `restr` permits the action `action` on `lv`.
 
-(define-metafunction Patina-typing
-  restrictions : srs T ℓ mq lv -> ℜ
+(define-judgment-form
+  Patina-typing
+  #:mode     (restr-permits I      I     I )
+  #:contract (restr-permits action restr lv)
 
-  [(restrictions srs T ℓ mq lv) []]
+  [(side-condition (∉ action actions))
+   --------------------------------------------------
+   (restr-permits action (lv_1 ℓ actions) lv_0)]
+
+  [(side-condition (≠ lv_0 lv_1))
+   --------------------------------------------------
+   (restr-permits action (lv_1 ℓ actions) lv_0)]
+
+  )
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (restrs-permit I      I      I )
+  #:contract (restrs-permit action restrs lv)
+
+  [(restr-permits action restr lv) ...
+   --------------------------------------------------
+   (restrs-permit action [restr ...] lv)]
 
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; move-vars
+;; loan-permits action loan lv
+;; loans-permit action loans lv
+;;
+;; Holds if the loan `loan` (resp. loans `loans`) permits
+;; (resp. permit) the action `action` on `lv`.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (loan-permits I      I   I  I I    I )
+  #:contract (loan-permits action srs ty Λ loan lv)
+
+  [(where restrs (loan-restrictions srs ty Λ loan))
+   (restrs-permit action restrs lv)
+   --------------------------------------------------
+   (loan-permits action srs ty Λ loan lv)]
+
+  )
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (loans-permit I      I   I  I I     I )
+  #:contract (loans-permit action srs ty Λ loans lv)
+
+  [(loan-permits action srs ty Λ loan lv) ...
+   --------------------------------------------------
+   (loans-permit action srs ty Λ [loan ...] lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-read-from
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-read-from I   I I I I I )
+  #:contract (can-read-from srs T Λ £ ℑ lv)
+
+  [;; Data must be initialized:
+   (lv-initialized ℑ (owning-path srs T lv))
+
+   ;; No base path can be mut-loaned:
+   (where [lv_b ...] (path-and-base-paths lv))
+   (unencumbered (mut-loans £) lv_b) ...
+   --------------------------------------------------
+   (can-read-from srs T Λ £ ℑ lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-write-to
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-write-to I   I I I I I )
+  #:contract (can-write-to srs T Λ £ ℑ lv)
+
+  [;; Data must be initialized:
+   ;; FIXME (lv-initialized ℑ (owning-path srs T lv))
+
+   ;; No base path can be loaned:
+   (where [lv_b ...] (path-and-base-paths lv))
+   (unencumbered £ lv_b) ...
+   --------------------------------------------------
+   (can-write-to srs T Λ £ ℑ lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; use-lv-ok and use-lvs-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (use-lv-ok I   I I I I I  O  O)
+  #:contract (use-ls-ok srs T Λ £ ℑ lv ty ℑ)
+
+  ;; If `lv` is POD, it is not moved but rather copied.
+  [(where ty (lvtype srs T lv))
+   (can-read-from srs T Λ £ ℑ lv)
+   (side-condition (ty-is-pod srs ty))
+   --------------------------------------------------
+   (use-lv-ok srs T Λ ℑ lv ty ℑ)]
+
+  ;; Otherwise, each use deinitializes the value:
+  [(where ty (lvtype srs T lv))
+   (can-move-from srs T Λ £ ℑ lv)
+   (side-condition (not (ty-is-pod srs ty)))
+   --------------------------------------------------
+   (use-lv-ok srs T Λ ℑ lv ty (\\ ℑ lv))]
 
 (define-judgment-form
   Patina-typing
   #:mode     (use-lvs-ok I   I I I I I   O   O)
-  #:contract (use-lvs-ok srs T Λ ℜ ℑ lvs tys ℑ)
+  #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
 
   [--------------------------------------------------
-   (use-lvs-ok srs T Λ ℜ ℑ [] [] ℑ)]
+   (use-lvs-ok srs T Λ ℑ [] [] ℑ)]
 
-  [(where ty (lvtype srs T lv))
-   (lv-initialized ℑ lv)
-   (can-move-from srs T Λ ℜ lv)
-   (use-lvs-ok srs T Λ ℜ (\\ ℑ lv) [lv_r ...] [ty_r ...] ℑ_r)
+  [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
+   (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
    --------------------------------------------------
-   (use-lvs-ok srs T Λ ℜ ℑ [lv lv_r ...] [ty ty_r ...] ℑ_r)]
+   (use-lvs-ok srs T Λ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
 
   )
 
@@ -2354,15 +2643,14 @@
 (define-judgment-form
   Patina-typing
   #:mode     (rv-ok I   I I I I I  O  O O)
-  #:contract (rv-ok srs T Λ ℜ ℑ rv ty ℑ ℜ)
+  #:contract (rv-ok srs T Λ £ ℑ rv ty ℑ £)
 
-  ;; copy x
+  ;; copy x -- deprecated
   [(where ty (lvtype srs T lv))
-   (lv-initialized ℑ lv)
-   (permit (access imm) ℜ lv)
+   (can-read-from srs T Λ £ ℑ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (copy lv) ty ℑ ℜ)]
+   (rv-ok srs T Λ £ ℑ (copy lv) ty ℑ £)]
 
   ;; x
   [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty_out] ℑ_out)
@@ -2382,52 +2670,49 @@
 
   ;; struct s ℓs [lv ...]
   [(where [ty_f ...] (field-tys srs s [ℓ ...]))
-   (use-lvs-ok srs T Λ ℜ ℑ [lv ...] [ty_a ...] ℑ_a)
+   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_a ...] ℑ_a)
    (lifetime-in-scope Λ ℓ) ...
    (subtype Λ ty_a ty_f) ...
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) ℑ_a ℜ)]
+   (rv-ok srs T Λ £ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) ℑ_a £)]
 
   ;; int
   [--------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ number int ℑ ℜ)]
+   (rv-ok srs T Λ £ ℑ number int ℑ £)]
 
   ;; lv + lv
-  [(can-read-from srs T Λ ℜ lv_1)
-   (can-read-from srs T Λ ℜ lv_2)
-   (where int (lvtype srs T lv_1))
-   (where int (lvtype srs T lv_2))
+  [(use-lvs-ok srs T Λ £ ℑ [lv_1 lv_2] [int int] ℑ)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (lv_1 + lv_2) int ℑ ℜ)]
+   (rv-ok srs T Λ £ ℑ (lv_1 + lv_2) int ℑ £)]
 
   ;; (Some lv)
-  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty] ℑ_1)
+  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (Some lv) (Option ty) ℑ_1 ℜ)]
+   (rv-ok srs T Λ £ ℑ (Some lv) (Option ty) ℑ_1 £)]
 
   ;; (None ty)
   [;; check ty well-formed
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (None ty) (Option ty) ℑ ℜ)]
+   (rv-ok srs T Λ £ ℑ (None ty) (Option ty) ℑ £)]
 
   ;; (vec ty lv ...)
   [;; check ty well-formed
    (where l (size [lv ...]))
-   (use-lvs-ok srs T Λ ℜ ℑ [lv ...] [ty_lv ...] ℑ_1)
+   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_lv ...] ℑ_1)
    (subtype Λ ty_lv ty) ...
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (vec ty lv ...) (vec ty l) ℑ_1 ℜ)]
+   (rv-ok srs T Λ £ ℑ (vec ty lv ...) (vec ty l) ℑ_1 £)]
 
   ;; (vec-len lv ...)
   [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
-   (can-read-from srs T Λ ℜ lv)
+   (can-read-from srs T Λ £ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (vec-len lv) int ℑ ℜ)]
+   (rv-ok srs T Λ £ ℑ (vec-len lv) int ℑ £)]
 
   ;; (pack lv ty)
-  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty] ℑ_1)
+  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (pack lv ty) ty ℑ_1 ℜ)]
+   (rv-ok srs T Λ £ ℑ (pack lv ty) ty ℑ_1 £)]
 
 
   )
@@ -2435,57 +2720,57 @@
 ; Test you can copy an int and the value remains in the initialized set.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i int)]] [] [] [i] (copy i) ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok [] [[(i int)]] [] [] [i] (copy i) ty ℑ £)
+  (ty ℑ £))
  (term ((int [i] []))))
 
 ; Test you cannot copy an uninitialized int.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i int)]] [] [] [] (copy i) ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok [] [[(i int)]] [] [] [] (copy i) ty ℑ £)
+  (ty ℑ £))
  (term ()))
 
 ; Test you cannot copy a ~int.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [] [] [i] (copy i) ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok [] [[(i (~ int))]] [] [] [i] (copy i) ty ℑ £)
+  (ty ℑ £))
  (term ()))
 
 ; ...But you can move it.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [] [] [i] i ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok [] [[(i (~ int))]] [] [] [i] i ty ℑ £)
+  (ty ℑ £))
  (term (((~ int) [] []))))
 
 ; ...Unless it is borrowed.
 (test-equal
  (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [] [(i a [])] [i] i ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok [] [[(i (~ int))]] [] [(i a [])] [i] i ty ℑ £)
+  (ty ℑ £))
  (term ()))
 
 ; Test a simple, well-typed struct expression: `A { i }`
 (test-equal
  (judgment-holds
-  (rv-ok ,test-srs [[(i int)]] [] [] [i] (struct A [] [i]) ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok ,test-srs [[(i int)]] [] [] [i] (struct A [] [i]) ty ℑ £)
+  (ty ℑ £))
  (term [((struct A []) [] [])]))
 
 ; Like previous, but with an invalid type for the field.
 (test-equal
  (judgment-holds
-  (rv-ok ,test-srs [[(i (~ int))]] [] [] [i] (struct A [] [i]) ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok ,test-srs [[(i (~ int))]] [] [] [i] (struct A [] [i]) ty ℑ £)
+  (ty ℑ £))
  (term ()))
 
 ; Like previous, but with an uninitialized `i`
 (test-equal
  (judgment-holds
-  (rv-ok ,test-srs [[(i int)]] [] [] [] (struct A [] [i]) ty ℑ ℜ)
-  (ty ℑ ℜ))
+  (rv-ok ,test-srs [[(i int)]] [] [] [] (struct A [] [i]) ty ℑ £)
+  (ty ℑ £))
  (term []))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2494,9 +2779,9 @@
 (define-judgment-form
   Patina-typing
   #:mode     (st-ok I    I I I I I  O O)
-  #:contract (st-ok prog T Λ ℜ ℑ st ℑ ℜ)
+  #:contract (st-ok prog T Λ £ ℑ st ℑ £)
 
-  [(rv-ok srs T Λ ℜ ℑ rv ty_rv (lv_rv ...) ℜ_rv)
+  [(rv-ok srs T Λ £ ℑ rv ty_rv (lv_rv ...) £_rv)
    (permit (access mut) ℜ_rv lv)
    (subtype Λ ty_rv (lvtype srs T lv))
    (side-condition (lv-not-initialied ℑ lv))
