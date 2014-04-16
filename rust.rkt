@@ -30,6 +30,7 @@
   ;; statements:
   [sts (st ...)]
   (st (lv = rv)
+      (lv := rv)
       (free lv)                    ;; drop all memory owned by `lv`
       (call g ℓs lvs)
       (match lv (Some mode x => bk) (None => bk))
@@ -468,16 +469,16 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; \\ -- a metafunction like remove
+;; \\ -- a metafunction for set difference
 
 (define-metafunction Patina-machine
-  \\ : [any ...] any -> [any ...]
+  \\ : [any ...] [any ...] -> [any ...]
 
-  [(\\ [any_0 ...] any_1)
-   ,(remove (term any_1) (term [any_0 ...]))])
+  [(\\ any_0 any_1)
+   ,(remove* any_0 any_1)])
 
-(test-equal (term (\\ [1 2 3] 2)) (term [1 3]))
-(test-equal (term (\\ [1 2 3] 4)) (term [1 2 3]))
+(test-equal (term (\\ [1 2 3] [2])) (term [1 3]))
+(test-equal (term (\\ [1 2 3] [4])) (term [1 2 3]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
@@ -2015,18 +2016,9 @@
   ;; is their relation to one another
   (Λ λs)
 
-  ;; restrictable actions
-  (action (access mq)
-          (borrow mq))
-  (actions [action ...])
-
   ;; in-scope loans
   (loan (ℓ mq lv))
   (£ [loan ...])
-
-  ;; restrictions
-  (restr (lv actions))
-  (restrs [restr ...])
          
   )
 
@@ -2359,12 +2351,10 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; restrictions
-;;
-;; Yields the set of restrictions implied by a loan.
+;; restricted-paths
 
 (define-metafunction Patina-machine
-  loan-restrictions : srs T Λ loan -> restrs
+  restricted-paths : srs T Λ lv -> restrs
 
   [(loan-restrictions srs T Λ (ℓ imm lv))
    ;; If &lv is in scope, requires that lv not be mutated nor &mut
@@ -2466,26 +2456,6 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; unique-path-if-mutable srs T mq lv
-;;
-;; For a mutable borrow (`mq = mut`), requires that `lv` be a unique
-;; path.
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (unique-path-if-mut I   I I  I )
-  #:contract (unique-path-if-mut srs T mq lv)
-
-  [--------------------------------------------------
-   (unique-path-if-mut srs T imm lv)]
-
-  [(unique-path srs T lv)
-   --------------------------------------------------
-   (unique-path-if-mut srs T mut lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; restr-permits action restr lv
 ;; restrs-permit action restrs lv
 ;;
@@ -2558,11 +2528,49 @@
   [;; Data must be initialized:
    (lv-initialized ℑ (owning-path srs T lv))
 
+   ;; FIXME what about
+   ;; let x = &mut a.b.c;
+   ;; v = a.b;
+   ;; this is where restrictions came into play, but a simpler
+   ;; way to consider this is to say that the path
+   ;; a.b is (at least PARTIALLY) ENCUMBERED by a loan.
+
    ;; No base path can be mut-loaned:
    (where [lv_b ...] (path-and-base-paths lv))
    (unencumbered (mut-loans £) lv_b) ...
    --------------------------------------------------
    (can-read-from srs T Λ £ ℑ lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-borrow-from
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-borrow-from I   I I I I I )
+  #:contract (can-borrow-from srs T Λ £ ℑ lv)
+
+  [;; Data must be initialized:
+   (lv-initialized ℑ (owning-path srs T lv))
+
+   ;; Data cannot have a lifetime shorter than the loan ℓ:
+   (where ty (lvtype srs T lv))
+   (lifetime-in-scope Λ ℓ)
+   (lifetime-bound Λ ℓ ty)
+   
+   ;; FIXME what about
+   ;; let x = &mut a.b.c;
+   ;; v = a.b;
+   ;; this is where restrictions came into play, but a simpler
+   ;; way to consider this is to say that the path
+   ;; a.b is (at least PARTIALLY) ENCUMBERED by a loan.
+
+   ;; No base path can be mut-loaned:
+   (where [lv_b ...] (path-and-base-paths lv))
+   (unencumbered (mut-loans £) lv_b) ...
+   --------------------------------------------------
+   (can-borrow-from srs T Λ £ ℑ lv)]
 
   )
 
@@ -2575,11 +2583,44 @@
   #:contract (can-write-to srs T Λ £ ℑ lv)
 
   [;; Data must be initialized:
-   ;; FIXME (lv-initialized ℑ (owning-path srs T lv))
+   (lv-initialized ℑ (owning-path srs T lv))
 
-   ;; No base path can be loaned:
+   ;; FIXME what about
+   ;; let x = &a.b.c;
+   ;; a.b = ...;
+   ;; this is where restrictions came into play, but a simpler
+   ;; way to consider this is to say that the path
+   ;; a.b is (at least PARTIALLY) ENCUMBERED by a loan.
+   ;;
+   ;; remember that &(*b).x where b is &T, doesn't (necessarily) have
+   ;; to prevent b = foo!
+
+   ;; No base path can be loaned in any form:
    (where [lv_b ...] (path-and-base-paths lv))
    (unencumbered £ lv_b) ...
+   --------------------------------------------------
+   (can-write-to srs T Λ £ ℑ lv)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-init
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-write-to I   I I I I I )
+  #:contract (can-write-to srs T Λ £ ℑ lv)
+
+  [(owned-path srs T lv)
+
+   ;; Data must not yet be initialized:
+   (lv-not-initialized ℑ lv)
+
+   ;; No need to check for base path loans, since
+   ;; we cannot loan out a partially initialized path.
+   ;;
+   ;; (where [lv_b ...] (path-and-base-paths lv))
+   ;; (unencumbered £ lv_b) ...
    --------------------------------------------------
    (can-write-to srs T Λ £ ℑ lv)]
 
@@ -2605,7 +2646,8 @@
    (can-move-from srs T Λ £ ℑ lv)
    (side-condition (not (ty-is-pod srs ty)))
    --------------------------------------------------
-   (use-lv-ok srs T Λ ℑ lv ty (\\ ℑ lv))]
+   (use-lv-ok srs T Λ ℑ lv ty (\\ ℑ (owned-subpaths lv)))]
+  )
 
 (define-judgment-form
   Patina-typing
@@ -2643,30 +2685,30 @@
 (define-judgment-form
   Patina-typing
   #:mode     (rv-ok I   I I I I I  O  O O)
-  #:contract (rv-ok srs T Λ £ ℑ rv ty ℑ £)
+  #:contract (rv-ok srs T Λ £ ℑ rv ty £ ℑ)
 
   ;; copy x -- deprecated
   [(where ty (lvtype srs T lv))
    (can-read-from srs T Λ £ ℑ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (copy lv) ty ℑ £)]
+   (rv-ok srs T Λ £ ℑ (copy lv) ty £ ℑ)]
 
   ;; x
-  [(use-lvs-ok srs T Λ ℜ ℑ [lv] [ty_out] ℑ_out)
+  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty_out] ℑ_out)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ lv ty_out ℑ_out ℜ)]
+   (rv-ok srs T Λ £ ℑ lv ty_out £ ℑ_out)]
 
   ;; & ℓ mq lv
-  [(where ty (lvtype srs T lv))
-   (lifetime-in-scope Λ ℓ)
-   (lifetime-bound Λ ℓ ty)
-   (permit (borrow mq) ℜ lv)
-   (unique-path-if-mut srs T mq lv)
-   (where ℜ_loan (restrictions srs T ℓ mq lv))
-   (lv-initialized ℑ lv)
+  [(can-borrow-from srs T Λ ℑ (mut-loans £) mq lv)
    --------------------------------------------------
-   (rv-ok srs T Λ ℜ ℑ (& ℓ mq lv) (& ℓ mq ty) ℑ (∪ ℜ ℜ_loan))]
+   (rv-ok srs T Λ £ ℑ (& ℓ mq lv) (& ℓ imm ty) ℑ (∪ £ [ℓ mq lv]))]
+
+  ;; & ℓ mq lv
+  [(can-borrow-from srs T Λ ℑ £ mq lv)
+   (unique-path srs T mq lv)
+   --------------------------------------------------
+   (rv-ok srs T Λ £ ℑ (& ℓ mq lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mq lv]))]
 
   ;; struct s ℓs [lv ...]
   [(where [ty_f ...] (field-tys srs s [ℓ ...]))
@@ -2674,11 +2716,11 @@
    (lifetime-in-scope Λ ℓ) ...
    (subtype Λ ty_a ty_f) ...
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) ℑ_a £)]
+   (rv-ok srs T Λ £ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) £ ℑ_a)]
 
   ;; int
   [--------------------------------------------------
-   (rv-ok srs T Λ £ ℑ number int ℑ £)]
+   (rv-ok srs T Λ £ ℑ number int £ ℑ)]
 
   ;; lv + lv
   [(use-lvs-ok srs T Λ £ ℑ [lv_1 lv_2] [int int] ℑ)
@@ -2688,12 +2730,12 @@
   ;; (Some lv)
   [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (Some lv) (Option ty) ℑ_1 £)]
+   (rv-ok srs T Λ £ ℑ (Some lv) (Option ty) £ ℑ_1)]
 
   ;; (None ty)
   [;; check ty well-formed
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (None ty) (Option ty) ℑ £)]
+   (rv-ok srs T Λ £ ℑ (None ty) (Option ty) £ ℑ)]
 
   ;; (vec ty lv ...)
   [;; check ty well-formed
@@ -2701,18 +2743,18 @@
    (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_lv ...] ℑ_1)
    (subtype Λ ty_lv ty) ...
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (vec ty lv ...) (vec ty l) ℑ_1 £)]
+   (rv-ok srs T Λ £ ℑ (vec ty lv ...) (vec ty l) £ ℑ_1)]
 
   ;; (vec-len lv ...)
   [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
    (can-read-from srs T Λ £ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (vec-len lv) int ℑ £)]
+   (rv-ok srs T Λ £ ℑ (vec-len lv) int £ ℑ)]
 
   ;; (pack lv ty)
   [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (pack lv ty) ty ℑ_1 £)]
+   (rv-ok srs T Λ £ ℑ (pack lv ty) ty £ ℑ_1)]
 
 
   )
