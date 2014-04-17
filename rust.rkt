@@ -2170,6 +2170,10 @@
 
   [(in-scope-lifetimes ((ℓ ℓs) ...)) (ℓ ...)])
 
+(test-equal
+ (term (in-scope-lifetimes [(a [b c]) (d [e f])]))
+ (term [a d]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; loaned-paths
 
@@ -2187,10 +2191,10 @@
 ;; `~T`), or `x` if `x` is a reference (e.g., `&T`).
 
 (define-metafunction Patina-typing
-  owning-path : srs ty lv -> lv
+  owning-path : srs T lv -> lv
 
-  [(owning-path srs ty lv)
-   (owning-path1 srs ty lv lv)]
+  [(owning-path srs T lv)
+   (owning-path1 srs T lv lv)]
 
   )
 
@@ -2217,739 +2221,751 @@
 
   )
 
+(test-equal
+ (term (owning-path ,test-srs ,test-T (* (b · 1))))
+ (term (b · 1)))
+
+(test-equal
+ (term (owning-path ,test-srs ,test-T (* r)))
+ (term (* r)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; path-and-base-paths lv
 ;;
 ;; Given something like (*x).f, yields: [(*x).f, *x, x]
 
 (define-metafunction Patina-typing
-  path-and-base-paths : srs T lv -> lvs
+  path-and-base-paths : lv -> lvs
 
-  [(path-and-base-paths srs T x)
+  [(path-and-base-paths x)
    [x]
    ]
 
-  [(path-and-base-paths srs T (lv · f))
+  [(path-and-base-paths (lv · f))
    [(lv · f) lv_1 ...]
-   (where [lv_1 ...] (path-and-base-paths srs T lv))
+   (where [lv_1 ...] (path-and-base-paths lv))
    ]
 
-  [(path-and-base-paths srs T (lv_b @ lv_i))
+  [(path-and-base-paths (lv_b @ lv_i))
    [(lv_b @ lv_i) lv_1 ...]
-   (where [lv_1 ...] (path-and-base-paths srs T lv))
+   (where [lv_1 ...] (path-and-base-paths lv))
    ]
 
-  [(path-and-base-paths srs T (* lv))
+  [(path-and-base-paths (* lv))
    [(* lv) lv_1 ...]
-   (where [lv_1 ...] (path-and-base-paths srs T lv))
+   (where [lv_1 ...] (path-and-base-paths lv))
    ]
 
   )
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; mut-loans £
-
-(define-metafunction Patina-typing
-  mut-loans : £ -> £
-
-  [(mut-loans [])
-   (mut-loans [])]
-
-  [(mut-loans [(ℓ imm lv) loan ...])
-   (mut-loans [loan ...])]
-
-  [(mut-loans [(ℓ mut lv) loan ...])
-   [(ℓ mut lv) loan_1 ...]
-   (where [loan_1 ...] (mut-loans [loan ...]))]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lifetime-in-scope Λ ℓ
-;;
-;; Holds if the lifetime ℓ is in scope
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (lifetime-in-scope I I)
-  #:contract (lifetime-in-scope Λ ℓ)
-
-  [(side-condition (∈ ℓ (in-scope-lifetimes Λ)))
-   --------------------------------------------------
-   (lifetime-in-scope Λ ℓ)]
-
-  )
-
 (test-equal
- (judgment-holds (lifetime-in-scope [(a []) (b [])] a))
- #t)
+ (term (path-and-base-paths (* (b · 1))))
+ (term [(* (b · 1)) (b · 1) b]))
 
-(test-equal
- (judgment-holds (lifetime-in-scope [(a []) (b [])] b))
- #t)
-
-(test-equal
- (judgment-holds (lifetime-in-scope [(a []) (b [])] c))
- #f)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lifetime-bound Λ ℓ ty
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; mut-loans £
 ;;
-;; If this judgement holds, then the type `ty` is bound by the
-;; lifetime ℓ.
+;;(define-metafunction Patina-typing
+;;  mut-loans : £ -> £
 ;;
-;; FIXME
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (lifetime-bound I I I )
-  #:contract (lifetime-bound Λ ℓ ty)
-
-  [--------------------------------------------------
-   (lifetime-bound Λ ℓ ty)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; unencumbered £ lv
+;;  [(mut-loans [])
+;;   (mut-loans [])]
 ;;
-;; True if lv has not been loaned out.
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (unencumbered I I )
-  #:contract (unencumbered £ lv)
-
-  [(side-condition (∉ lv (loaned-paths £)))
-   --------------------------------------------------
-   (unencumbered £ lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; owned-path srs T lv
+;;  [(mut-loans [(ℓ imm lv) loan ...])
+;;   (mut-loans [loan ...])]
 ;;
-;; Holds if the path `lv` is an *owned path*.
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (owned-path I   I I )
-  #:contract (owned-path srs T lv)
-
-  [(where lv (owning-path srs T lv))
-   --------------------------------------------------
-   (owned-path srs T lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-move-from
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-move-from I   I I I I I )
-  #:contract (can-move-from srs T Λ £ ℑ lv)
-
-  [;; Can only move from things we own:
-   (owned-path srs T lv)
-
-   ;; Otherwise same as write:
-   (can-write-to srs T Λ £ ℑ lv) 
-   --------------------------------------------------
-   (can-move-from srs T Λ £ ℑ lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; owned-subpaths
+;;  [(mut-loans [(ℓ mut lv) loan ...])
+;;   [(ℓ mut lv) loan_1 ...]
+;;   (where [loan_1 ...] (mut-loans [loan ...]))]
 ;;
-;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
-;; as appropriate for the type of `lv`
-
-(define-metafunction Patina-machine
-  owned-subpaths : srs T lv -> [lv ...]
-  
-  [(owned-subpaths srs T lv)
-   [lv lv_1 ... lv_2 ...]
-   (where [lv_1 ...] (owned-subpaths1 srs T lv))
-   (where [lv_2 ...] ,(flatten (term [(owned-subpaths1 srs T lv_1) ...])))
-   ]
-  )
-
-(define-metafunction Patina-machine
-  owned-subpaths1 : srs T lv -> [lv ...]
-
-  [(owned-subpaths1 srs T lv)
-   [(lv · f) ...]
-   (where (struct s ℓs) (lvtype srs T lv))
-   (where [f ...] (field-names srs s ℓs))]
-
-  [(owned-subpaths1 srs T lv)
-   [(* lv)]
-   (where (~ ty) (lvtype srs T lv))]
-  
-  [(owned-subpaths1 srs T lv)
-   []]
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; restricted-paths
+;;  )
 ;;
-;; If a loan affects the lvalue `lv`, this function returns a set of
-;; paths for `lv` that are *restricted* as a result. A path is
-;; restricted if accessing it would violate the terms of the loan.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; lifetime-in-scope Λ ℓ
+;;;;
+;;;; Holds if the lifetime ℓ is in scope
 ;;
-;; More concretely, for a mutable loan of `lv`, `restricted-paths lv`
-;; yields the set of paths that cannot be read or written as a result.
-;; This includes not only `lv` itself but base paths of `lv`, because
-;; reading those paths would either copy `lv` (as part of a larger
-;; copy) or else create a second path to the same memory that was
-;; borrowed. Similar concerns hold for writing.
-
-(define-metafunction Patina-machine
-  paths-restricted-by-loan-of : srs T lv -> lvs
-
-  [(paths-restricted-by-loan-of srs T x)
-   [x]
-   ]
-
-  [(paths-restricted-by-loan-of srs T (lv · f))
-   [(lv · f) lv_1 ...]
-   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
-   ]
-
-  [(paths-restricted-by-loan-of srs T (lv_a @ lv_i))
-   [(lv_a @ lv_i) lv_1 ...]
-   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv_a))
-   ]
-
-  [(paths-restricted-by-loan-of srs T (* lv))
-   [(* lv) lv_1 ...]
-   (where (~ ty) (lvtype srs T lv))
-   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
-   ]
-
-  ;; If we borrowed `*x` and `x` is a `&T`, that need not prevent us
-  ;; from reading (or writing) `x`. I would eventually like to extend
-  ;; this rule to handle writes to &mut borrowed lvalues too, but that
-  ;; needs a bit more infrastructure and for time being I want to
-  ;; model what rustc currently allows (or should allow).
-  [(paths-restricted-by-loan-of srs T (* lv))
-   [(* lv)]
-   (where (& ℓ imm ty) (lvtype srs T lv))
-   ]
-
-  [(paths-restricted-by-loan-of srs T (* lv))
-   [(* lv) lv_1 ...]
-   (where (& ℓ mut ty) (lvtype srs T lv))
-   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
-   ]
-
-  )
-
-(define-metafunction Patina-machine
-  paths-restricted-by-loans : srs T £ -> lvs
-
-  [(paths-restricted-by-loans srs T [(ℓ mq lv) ...])
-   ,(flatten (term [(paths-restricted-by-loan-of srs T Λ lv) ...]))])
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; path-unique-for srs T Λ ℓ lv
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (lifetime-in-scope I I)
+;;  #:contract (lifetime-in-scope Λ ℓ)
 ;;
-;; Holds if the path `lv` is a *unique path* during the lifetime ℓ.
-;; This means that, during the lifetime ℓ, `lv` is the only
-;; *accessible* path that would evaluate to that particular address.
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (path-unique-for I   I I I I )
-  #:contract (path-unique-for srs T Λ ℓ lv)
-
-  [--------------------------------------------------
-   (path-unique-for srs T Λ ℓ x)]
-
-  [(path-unique-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-unique-for srs T Λ ℓ (lv · f))]
-
-  [(path-unique-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-unique-for srs T Λ ℓ (lv @ lv_1))]
-
-  [(where (~ ty) (lvtype srs T lv))
-   (path-unique-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-unique-for srs T Λ ℓ (* lv))]
-
-  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ_lv)
-   (path-unique-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-unique-for srs T Λ ℓ (* lv))]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; path-freezable-for srs T Λ ℓ lv
+;;  [(side-condition (∈ ℓ (in-scope-lifetimes Λ)))
+;;   --------------------------------------------------
+;;   (lifetime-in-scope Λ ℓ)]
 ;;
-;; Holds if the path `lv` is a *freezable path* during the lifetime ℓ.
-;; I am not quite sure how best to phrase this predicate in English.
-;; Roughly speaking, the path-freezable-for predicte guarantees that the
-;; memory which `lv` evaluates to will not be mutated during the
-;; lifetime ℓ, assuming that the path `lv` is not itself assigned to
-;; (if that is even possible). Often this corresponds to the underlying
-;; memory referenced by `lv` but not always.
+;;  )
 ;;
-;; Here are some interesting and representative examples:
+;;(test-equal
+;; (judgment-holds (lifetime-in-scope [(a []) (b [])] a))
+;; #t)
 ;;
-;; 1. `fn foo(x: &'a &'b mut T) -> &'a T { &**x }`
+;;(test-equal
+;; (judgment-holds (lifetime-in-scope [(a []) (b [])] b))
+;; #t)
 ;;
-;;     This example is legal because the path **x is freezable-for the
-;;     lifetime 'a. If however the return type were `&'b T`, the
-;;     example would be an error, because `**x` is not freezable-for
-;;     'b. This is true *even though* we know that the memory will not yet
-;;     be freed.
+;;(test-equal
+;; (judgment-holds (lifetime-in-scope [(a []) (b [])] c))
+;; #f)
 ;;
-;;     The reason is that, so long as the `&mut` *x is considered
-;;     aliased, it cannot be changed. But that alias expires after 'a,
-;;     and hence the memory in 'b would be considered mutable
-;;     again.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; lifetime-bound Λ ℓ ty
+;;;;
+;;;; If this judgement holds, then the type `ty` is bound by the
+;;;; lifetime ℓ.
+;;;;
+;;;; FIXME
 ;;
-;; 2. `fn foo(x: &'a mut T) -> &'a T { &*x }`
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (lifetime-bound I I I )
+;;  #:contract (lifetime-bound Λ ℓ ty)
 ;;
-;;     In this case, the path `*x` is freezable-for the lifetime `'a`.
-;;     The reason is that `x` is the only pointer that can mutate `*x`
-;;     during the lifetime `'a`, and hence if we freeze `*x` we can be
-;;     sure that the memory will not change until after `'a`.
+;;  [--------------------------------------------------
+;;   (lifetime-bound Λ ℓ ty)]
 ;;
-;; 3. `fn foo() -> &'a int { let x = 3; &x }`
+;;  )
 ;;
-;;     Naturally, this case yields an error, but NOT because of
-;;     freezable-for. This is crucial to the previous two examples, in
-;;     fact. The idea here is that while the memory pointed at by `x`
-;;     isn't valid for the entire lifetime 'a, if we ignore memory
-;;     reuse, we can still say that it won't be assigned to. I'm not
-;;     sure how best to express this part in English. Maybe this rule
-;;     can be made more tidy. In any case, there is another predicate
-;;     `path-outlives` that would catch this sort of error.
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (path-freezable-for I   I I I I )
-  #:contract (path-freezable-for srs T Λ ℓ lv)
-
-  [--------------------------------------------------
-   (path-freezable-for srs T Λ ℓ x)]
-
-  [(path-freezable-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-freezable-for srs T Λ ℓ (lv · f))]
-
-  [(path-freezable-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-freezable-for srs T Λ ℓ (lv @ lv_1))]
-
-  [(where (~ ty) (lvtype srs T lv))
-   (path-freezable-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-freezable-for srs T Λ ℓ (* lv))]
-
-  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ_lv)
-   (path-freezable-for srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-freezable-for srs T Λ ℓ (* lv))]
-
-  [(where (& ℓ_lv imm ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ_lv)
-   --------------------------------------------------
-   (path-freezable-for srs T Λ ℓ (* lv))]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-access
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-access I   I I I I I )
-  #:contract (can-access srs T Λ £ ℑ lv)
-
-  [;; Data must be initialized:
-   (lv-initialized ℑ (owning-path srs T lv))
-
-   ;; The path lv cannot be restricted by a loan:
-   ;;
-   ;; This covers cases like these:
-   ;;
-   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
-   ;;    a.b = ...;          // would overwrite c as part
-   ;;
-   ;;    let x = &a.b.c;     // restricts a, a.b, and a.b.c
-   ;;    a.b = ...;          // would overwrite c as part
-   ;;
-   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
-   ;;    let y = a.b;        // would read c as part
-   (where [lv_r ...] (paths-restricted-by-loans srs T £_l))
-   (side-condition (∉ lv [lv_r ...]))
-
-   ;; Neither the path lv nor any base path of lv can be borrowed:
-   ;;
-   ;; This covers cases like this:
-   ;;
-   ;;    let x = &mut a;
-   ;;    a.b = ...;          // would overwrite part of a
-   ;;
-   ;;    let x = &a;
-   ;;    a.b = ...;          // would overwrite part of a
-   ;;
-   ;;    let x = &mut a;
-   ;;    let y = a.b;        // would read part of a
-   (where [lv_b ...] (path-and-base-paths lv))
-   (unencumbered £_l lv_b) ...
-   --------------------------------------------------
-   (can-access srs T Λ £_l ℑ lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-read-from
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-read-from I   I I I I I )
-  #:contract (can-read-from srs T Λ £ ℑ lv)
-
-  [;; Only mutable loans prevent reads:
-   (can-access srs T Λ (mut-loans £) ℑ lv)
-   --------------------------------------------------
-   (can-read-from srs T Λ £ ℑ lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-write-to
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-write-to I   I I I I I )
-  #:contract (can-write-to srs T Λ £ ℑ lv)
-
-  [;; All loans prevent writes:
-   (can-access srs T Λ £ ℑ lv)
-   --------------------------------------------------
-   (can-write-to srs T Λ £ ℑ lv)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; can-init
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (can-init I   I I I I )
-  #:contract (can-init srs T Λ ℑ lv)
-
-  [(lv-not-initialized ℑ x)
-   --------------------------------------------------
-   (can-init srs T Λ ℑ x)]
-
-  [(lv-initialized ℑ lv)
-   (lv-not-initialized ℑ (lv · f))
-   --------------------------------------------------
-   (can-init srs T Λ ℑ (lv · f))]
-
-  [(lv-initialized ℑ lv)
-   (lv-not-initialized ℑ (* lv))
-   (where (~ ty) (lvtype srs T lv))
-   --------------------------------------------------
-   (can-init srs T Λ ℑ (* lv))]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; path-outlives
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (path-outlives I   I I I I )
-  #:contract (path-outlives srs T Λ ℓ lv)
-
-  [;; At present, we require that the borrow be for some lifetime that
-   ;; is in scope. I'd like to lift this requirement in the future,
-   ;; though I can't recall just what gets more complicated as a
-   ;; result!
-   (lifetime-in-scope Λ ℓ)
-
-   ;; Determine from the path whether we be sure that the path outlives ℓ.
-   (path-bound-by-lifetime srs T Λ ℓ lv)
-
-   ;; Data cannot have a lifetime shorter than the loan ℓ.
-   ;;
-   ;; FIXME I feel like this check is unnecessary and implied by other
-   ;; requirements. In other words, the memory has an ultimate local
-   ;; variable in a block with lifetime ℓ, and presumably we wouldn't
-   ;; allow that owner to gain access to data with some lifetime less
-   ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
-   ;; to allow data to be borrowed for a lifetime not currently in
-   ;; scope, actually.)
-   ;; (where ty (lvtype srs T lv))
-   ;; (ty-bound-by-lifetime Λ ℓ ty)
-   --------------------------------------------------
-   (path-outlives srs T Λ ℓ lv)]
-
-  )
-
-;; Holds if the memory directly referenced by `lv`
-;; will outlive `ℓ`.
-(define-judgment-form
-  Patina-typing
-  #:mode     (path-bound-by-lifetime I   I I I I )
-  #:contract (path-bound-by-lifetime srs T Λ ℓ lv)
-
-  [;; FIXME must determine lifetime of x, currently not found in any map
-   --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ x)]
-
-  [(path-bound-by-lifetime srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (lv · f))]
-
-  [(path-bound-by-lifetime srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (lv @ lv_i))]
-
-  [(where (~ ty) (lvtype srs T lv))
-   (path-bound-by-lifetime srs T Λ ℓ lv)
-   --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
-
-  [(where (& ℓ_lv mq ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ_lv)
-   --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; use-lv-ok and use-lvs-ok
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (use-lv-ok I   I I I I I  O  O)
-  #:contract (use-lv-ok srs T Λ £ ℑ lv ty ℑ)
-
-  ;; If `lv` is POD, it is not moved but rather copied.
-  [(where ty (lvtype srs T lv))
-   (can-read-from srs T Λ £ ℑ lv)
-   (side-condition (ty-is-pod srs ty))
-   --------------------------------------------------
-   (use-lv-ok srs T Λ £ ℑ lv ty ℑ)]
-
-  ;; Otherwise, each use deinitializes the value:
-  [(where ty (lvtype srs T lv))
-   (can-move-from srs T Λ £ ℑ lv)
-   (side-condition (not (ty-is-pod srs ty)))
-   --------------------------------------------------
-   (use-lv-ok srs T Λ £ ℑ lv ty (\\ ℑ (owned-subpaths lv)))]
-  )
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (use-lvs-ok I   I I I I I   O   O)
-  #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
-
-  [--------------------------------------------------
-   (use-lvs-ok srs T Λ £ ℑ [] [] ℑ)]
-
-  [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
-   (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
-   --------------------------------------------------
-   (use-lvs-ok srs T Λ £ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; rv-ok
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (rv-ok I   I I I I I  O  O O)
-  #:contract (rv-ok srs T Λ £ ℑ rv ty £ ℑ)
-
-  ;; copy x -- deprecated
-  [(where ty (lvtype srs T lv))
-   (can-read-from srs T Λ £ ℑ lv)
-   (side-condition (ty-is-pod srs ty))
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (copy lv) ty £ ℑ)]
-
-  ;; x
-  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty_out] ℑ_out)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ lv ty_out £ ℑ_out)]
-
-  ;; & ℓ imm lv
-  [(where ty (lvtype srs T lv))
-   (can-read-from srs T Λ ℑ (mut-loans £) lv)
-   (path-freezable-for srs T Λ ℓ lv)
-   (path-outlives srs T Λ ℓ lv)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (& ℓ imm lv) (& ℓ imm ty) ℑ (∪ £ [ℓ imm lv]))]
-
-  ;; & ℓ mut lv
-  [(where ty (lvtype srs T lv))
-   (can-write-to srs T Λ ℑ (mut-loans £) lv)
-   (path-unique-for srs T Λ ℓ lv)
-   (path-outlives srs T Λ ℓ lv)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (& ℓ mut lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mut lv]))]
-
-  ;; struct s ℓs [lv ...]
-  [(where [ty_f ...] (field-tys srs s [ℓ ...]))
-   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_a ...] ℑ_a)
-   (lifetime-in-scope Λ ℓ) ...
-   (subtype Λ ty_a ty_f) ...
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) £ ℑ_a)]
-
-  ;; int
-  [--------------------------------------------------
-   (rv-ok srs T Λ £ ℑ number int £ ℑ)]
-
-  ;; lv + lv
-  [(use-lvs-ok srs T Λ £ ℑ [lv_1 lv_2] [int int] ℑ)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (lv_1 + lv_2) int ℑ £)]
-
-  ;; (Some lv)
-  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (Some lv) (Option ty) £ ℑ_1)]
-
-  ;; (None ty)
-  [;; check ty well-formed
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (None ty) (Option ty) £ ℑ)]
-
-  ;; (vec ty lv ...)
-  [;; check ty well-formed
-   (where l (size [lv ...]))
-   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_lv ...] ℑ_1)
-   (subtype Λ ty_lv ty) ...
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (vec ty lv ...) (vec ty l) £ ℑ_1)]
-
-  ;; (vec-len lv ...)
-  [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
-   (can-read-from srs T Λ £ ℑ lv)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (vec-len lv) int £ ℑ)]
-
-  ;; (pack lv ty)
-  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
-   --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (pack lv ty) ty £ ℑ_1)]
-
-  )
-
-; Test you can copy an int and the value remains in the initialized set.
-(test-equal
- (judgment-holds
-  (rv-ok [] [[(i int)]] [] [] [i] (copy i) ty ℑ £)
-  (ty ℑ £))
- (term ((int [i] []))))
-
-; Test you cannot copy an uninitialized int.
-(test-equal
- (judgment-holds
-  (rv-ok [] [[(i int)]] [] [] [] (copy i) ty ℑ £)
-  (ty ℑ £))
- (term ()))
-
-; Test you cannot copy a ~int.
-(test-equal
- (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [] [] [i] (copy i) ty ℑ £)
-  (ty ℑ £))
- (term ()))
-
-; ...But you can move it.
-(test-equal
- (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [] [] [i] i ty ℑ £)
-  (ty ℑ £))
- (term (((~ int) [] []))))
-
-; ...Unless it is borrowed.
-(test-equal
- (judgment-holds
-  (rv-ok [] [[(i (~ int))]] [] [(i a [])] [i] i ty ℑ £)
-  (ty ℑ £))
- (term ()))
-
-; Test a simple, well-typed struct expression: `A { i }`
-(test-equal
- (judgment-holds
-  (rv-ok ,test-srs [[(i int)]] [] [] [i] (struct A [] [i]) ty ℑ £)
-  (ty ℑ £))
- (term [((struct A []) [] [])]))
-
-; Like previous, but with an invalid type for the field.
-(test-equal
- (judgment-holds
-  (rv-ok ,test-srs [[(i (~ int))]] [] [] [i] (struct A [] [i]) ty ℑ £)
-  (ty ℑ £))
- (term ()))
-
-; Like previous, but with an uninitialized `i`
-(test-equal
- (judgment-holds
-  (rv-ok ,test-srs [[(i int)]] [] [] [] (struct A [] [i]) ty ℑ £)
-  (ty ℑ £))
- (term []))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; st-ok
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (st-ok I    I I I I I  O O)
-  #:contract (st-ok prog T Λ £ ℑ st ℑ £)
-
-  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
-   (can-init srs T Λ ℑ_rv lv)
-   (subtype Λ ty_rv (lvtype srs T lv))
-   --------------------------------------------------
-   (st-ok (srs fns) T Λ £ ℑ (lv = rv) £_rv (∪ ℑ_rv [lv]))]
-
-  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
-   (can-write-to srs T Λ £_rv ℑ_rv lv)
-   (subtype Λ ty_rv (lvtype srs T lv))
-   --------------------------------------------------
-   (st-ok (srs fns) T Λ £ ℑ (lv := rv) £_rv ℑ_rv)]
-
-  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
-   --------------------------------------------------
-   (st-ok (srs fns) T Λ £ ℑ (free lv) £ ℑ_1)]
-
-;;   [(bk-ok prog T_1 Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)
-;;    --------------------------------------------------
-;;    (st-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; bk-ok
-;; 
-;; (define-judgment-form
-;;   Patina-typing
-;;   #:mode     (bk-ok I    I I I I I  O O)
-;;   #:contract (bk-ok prog T Λ ℜ ℑ bk ℑ ℜ)
-;; 
-;;   [(where [vdecls_0 ...] T)
-;;    (where T_1 [vdecls_1 vdecls_0 ...])
-;;    --------------------------------------------------
-;;    (bk-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
-;; 
-;;   )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; unencumbered £ lv
+;;;;
+;;;; True if lv has not been loaned out.
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (unencumbered I I )
+;;  #:contract (unencumbered £ lv)
+;;
+;;  [(side-condition (∉ lv (loaned-paths £)))
+;;   --------------------------------------------------
+;;   (unencumbered £ lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; owned-path srs T lv
+;;;;
+;;;; Holds if the path `lv` is an *owned path*.
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (owned-path I   I I )
+;;  #:contract (owned-path srs T lv)
+;;
+;;  [(where lv (owning-path srs T lv))
+;;   --------------------------------------------------
+;;   (owned-path srs T lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-move-from
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-move-from I   I I I I I )
+;;  #:contract (can-move-from srs T Λ £ ℑ lv)
+;;
+;;  [;; Can only move from things we own:
+;;   (owned-path srs T lv)
+;;
+;;   ;; Otherwise same as write:
+;;   (can-write-to srs T Λ £ ℑ lv) 
+;;   --------------------------------------------------
+;;   (can-move-from srs T Λ £ ℑ lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; owned-subpaths
+;;;;
+;;;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
+;;;; as appropriate for the type of `lv`
+;;
+;;(define-metafunction Patina-machine
+;;  owned-subpaths : srs T lv -> [lv ...]
+;;  
+;;  [(owned-subpaths srs T lv)
+;;   [lv lv_1 ... lv_2 ...]
+;;   (where [lv_1 ...] (owned-subpaths1 srs T lv))
+;;   (where [lv_2 ...] ,(flatten (term [(owned-subpaths1 srs T lv_1) ...])))
+;;   ]
+;;  )
+;;
+;;(define-metafunction Patina-machine
+;;  owned-subpaths1 : srs T lv -> [lv ...]
+;;
+;;  [(owned-subpaths1 srs T lv)
+;;   [(lv · f) ...]
+;;   (where (struct s ℓs) (lvtype srs T lv))
+;;   (where [f ...] (field-names srs s ℓs))]
+;;
+;;  [(owned-subpaths1 srs T lv)
+;;   [(* lv)]
+;;   (where (~ ty) (lvtype srs T lv))]
+;;  
+;;  [(owned-subpaths1 srs T lv)
+;;   []]
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; restricted-paths
+;;;;
+;;;; If a loan affects the lvalue `lv`, this function returns a set of
+;;;; paths for `lv` that are *restricted* as a result. A path is
+;;;; restricted if accessing it would violate the terms of the loan.
+;;;;
+;;;; More concretely, for a mutable loan of `lv`, `restricted-paths lv`
+;;;; yields the set of paths that cannot be read or written as a result.
+;;;; This includes not only `lv` itself but base paths of `lv`, because
+;;;; reading those paths would either copy `lv` (as part of a larger
+;;;; copy) or else create a second path to the same memory that was
+;;;; borrowed. Similar concerns hold for writing.
+;;
+;;(define-metafunction Patina-machine
+;;  paths-restricted-by-loan-of : srs T lv -> lvs
+;;
+;;  [(paths-restricted-by-loan-of srs T x)
+;;   [x]
+;;   ]
+;;
+;;  [(paths-restricted-by-loan-of srs T (lv · f))
+;;   [(lv · f) lv_1 ...]
+;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
+;;   ]
+;;
+;;  [(paths-restricted-by-loan-of srs T (lv_a @ lv_i))
+;;   [(lv_a @ lv_i) lv_1 ...]
+;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv_a))
+;;   ]
+;;
+;;  [(paths-restricted-by-loan-of srs T (* lv))
+;;   [(* lv) lv_1 ...]
+;;   (where (~ ty) (lvtype srs T lv))
+;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
+;;   ]
+;;
+;;  ;; If we borrowed `*x` and `x` is a `&T`, that need not prevent us
+;;  ;; from reading (or writing) `x`. I would eventually like to extend
+;;  ;; this rule to handle writes to &mut borrowed lvalues too, but that
+;;  ;; needs a bit more infrastructure and for time being I want to
+;;  ;; model what rustc currently allows (or should allow).
+;;  [(paths-restricted-by-loan-of srs T (* lv))
+;;   [(* lv)]
+;;   (where (& ℓ imm ty) (lvtype srs T lv))
+;;   ]
+;;
+;;  [(paths-restricted-by-loan-of srs T (* lv))
+;;   [(* lv) lv_1 ...]
+;;   (where (& ℓ mut ty) (lvtype srs T lv))
+;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
+;;   ]
+;;
+;;  )
+;;
+;;(define-metafunction Patina-machine
+;;  paths-restricted-by-loans : srs T £ -> lvs
+;;
+;;  [(paths-restricted-by-loans srs T [(ℓ mq lv) ...])
+;;   ,(flatten (term [(paths-restricted-by-loan-of srs T Λ lv) ...]))])
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; path-unique-for srs T Λ ℓ lv
+;;;;
+;;;; Holds if the path `lv` is a *unique path* during the lifetime ℓ.
+;;;; This means that, during the lifetime ℓ, `lv` is the only
+;;;; *accessible* path that would evaluate to that particular address.
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (path-unique-for I   I I I I )
+;;  #:contract (path-unique-for srs T Λ ℓ lv)
+;;
+;;  [--------------------------------------------------
+;;   (path-unique-for srs T Λ ℓ x)]
+;;
+;;  [(path-unique-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-unique-for srs T Λ ℓ (lv · f))]
+;;
+;;  [(path-unique-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-unique-for srs T Λ ℓ (lv @ lv_1))]
+;;
+;;  [(where (~ ty) (lvtype srs T lv))
+;;   (path-unique-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-unique-for srs T Λ ℓ (* lv))]
+;;
+;;  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
+;;   (lifetime-≤ Λ ℓ ℓ_lv)
+;;   (path-unique-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-unique-for srs T Λ ℓ (* lv))]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; path-freezable-for srs T Λ ℓ lv
+;;;;
+;;;; Holds if the path `lv` is a *freezable path* during the lifetime ℓ.
+;;;; I am not quite sure how best to phrase this predicate in English.
+;;;; Roughly speaking, the path-freezable-for predicte guarantees that the
+;;;; memory which `lv` evaluates to will not be mutated during the
+;;;; lifetime ℓ, assuming that the path `lv` is not itself assigned to
+;;;; (if that is even possible). Often this corresponds to the underlying
+;;;; memory referenced by `lv` but not always.
+;;;;
+;;;; Here are some interesting and representative examples:
+;;;;
+;;;; 1. `fn foo(x: &'a &'b mut T) -> &'a T { &**x }`
+;;;;
+;;;;     This example is legal because the path **x is freezable-for the
+;;;;     lifetime 'a. If however the return type were `&'b T`, the
+;;;;     example would be an error, because `**x` is not freezable-for
+;;;;     'b. This is true *even though* we know that the memory will not yet
+;;;;     be freed.
+;;;;
+;;;;     The reason is that, so long as the `&mut` *x is considered
+;;;;     aliased, it cannot be changed. But that alias expires after 'a,
+;;;;     and hence the memory in 'b would be considered mutable
+;;;;     again.
+;;;;
+;;;; 2. `fn foo(x: &'a mut T) -> &'a T { &*x }`
+;;;;
+;;;;     In this case, the path `*x` is freezable-for the lifetime `'a`.
+;;;;     The reason is that `x` is the only pointer that can mutate `*x`
+;;;;     during the lifetime `'a`, and hence if we freeze `*x` we can be
+;;;;     sure that the memory will not change until after `'a`.
+;;;;
+;;;; 3. `fn foo() -> &'a int { let x = 3; &x }`
+;;;;
+;;;;     Naturally, this case yields an error, but NOT because of
+;;;;     freezable-for. This is crucial to the previous two examples, in
+;;;;     fact. The idea here is that while the memory pointed at by `x`
+;;;;     isn't valid for the entire lifetime 'a, if we ignore memory
+;;;;     reuse, we can still say that it won't be assigned to. I'm not
+;;;;     sure how best to express this part in English. Maybe this rule
+;;;;     can be made more tidy. In any case, there is another predicate
+;;;;     `path-outlives` that would catch this sort of error.
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (path-freezable-for I   I I I I )
+;;  #:contract (path-freezable-for srs T Λ ℓ lv)
+;;
+;;  [--------------------------------------------------
+;;   (path-freezable-for srs T Λ ℓ x)]
+;;
+;;  [(path-freezable-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-freezable-for srs T Λ ℓ (lv · f))]
+;;
+;;  [(path-freezable-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-freezable-for srs T Λ ℓ (lv @ lv_1))]
+;;
+;;  [(where (~ ty) (lvtype srs T lv))
+;;   (path-freezable-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-freezable-for srs T Λ ℓ (* lv))]
+;;
+;;  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
+;;   (lifetime-≤ Λ ℓ ℓ_lv)
+;;   (path-freezable-for srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-freezable-for srs T Λ ℓ (* lv))]
+;;
+;;  [(where (& ℓ_lv imm ty) (lvtype srs T lv))
+;;   (lifetime-≤ Λ ℓ ℓ_lv)
+;;   --------------------------------------------------
+;;   (path-freezable-for srs T Λ ℓ (* lv))]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-access
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-access I   I I I I I )
+;;  #:contract (can-access srs T Λ £ ℑ lv)
+;;
+;;  [;; Data must be initialized:
+;;   (lv-initialized ℑ (owning-path srs T lv))
+;;
+;;   ;; The path lv cannot be restricted by a loan:
+;;   ;;
+;;   ;; This covers cases like these:
+;;   ;;
+;;   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
+;;   ;;    a.b = ...;          // would overwrite c as part
+;;   ;;
+;;   ;;    let x = &a.b.c;     // restricts a, a.b, and a.b.c
+;;   ;;    a.b = ...;          // would overwrite c as part
+;;   ;;
+;;   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
+;;   ;;    let y = a.b;        // would read c as part
+;;   (where [lv_r ...] (paths-restricted-by-loans srs T £_l))
+;;   (side-condition (∉ lv [lv_r ...]))
+;;
+;;   ;; Neither the path lv nor any base path of lv can be borrowed:
+;;   ;;
+;;   ;; This covers cases like this:
+;;   ;;
+;;   ;;    let x = &mut a;
+;;   ;;    a.b = ...;          // would overwrite part of a
+;;   ;;
+;;   ;;    let x = &a;
+;;   ;;    a.b = ...;          // would overwrite part of a
+;;   ;;
+;;   ;;    let x = &mut a;
+;;   ;;    let y = a.b;        // would read part of a
+;;   (where [lv_b ...] (path-and-base-paths lv))
+;;   (unencumbered £_l lv_b) ...
+;;   --------------------------------------------------
+;;   (can-access srs T Λ £_l ℑ lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-read-from
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-read-from I   I I I I I )
+;;  #:contract (can-read-from srs T Λ £ ℑ lv)
+;;
+;;  [;; Only mutable loans prevent reads:
+;;   (can-access srs T Λ (mut-loans £) ℑ lv)
+;;   --------------------------------------------------
+;;   (can-read-from srs T Λ £ ℑ lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-write-to
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-write-to I   I I I I I )
+;;  #:contract (can-write-to srs T Λ £ ℑ lv)
+;;
+;;  [;; All loans prevent writes:
+;;   (can-access srs T Λ £ ℑ lv)
+;;   --------------------------------------------------
+;;   (can-write-to srs T Λ £ ℑ lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-init
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-init I   I I I I )
+;;  #:contract (can-init srs T Λ ℑ lv)
+;;
+;;  [(lv-not-initialized ℑ x)
+;;   --------------------------------------------------
+;;   (can-init srs T Λ ℑ x)]
+;;
+;;  [(lv-initialized ℑ lv)
+;;   (lv-not-initialized ℑ (lv · f))
+;;   --------------------------------------------------
+;;   (can-init srs T Λ ℑ (lv · f))]
+;;
+;;  [(lv-initialized ℑ lv)
+;;   (lv-not-initialized ℑ (* lv))
+;;   (where (~ ty) (lvtype srs T lv))
+;;   --------------------------------------------------
+;;   (can-init srs T Λ ℑ (* lv))]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; path-outlives
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (path-outlives I   I I I I )
+;;  #:contract (path-outlives srs T Λ ℓ lv)
+;;
+;;  [;; At present, we require that the borrow be for some lifetime that
+;;   ;; is in scope. I'd like to lift this requirement in the future,
+;;   ;; though I can't recall just what gets more complicated as a
+;;   ;; result!
+;;   (lifetime-in-scope Λ ℓ)
+;;
+;;   ;; Determine from the path whether we be sure that the path outlives ℓ.
+;;   (path-bound-by-lifetime srs T Λ ℓ lv)
+;;
+;;   ;; Data cannot have a lifetime shorter than the loan ℓ.
+;;   ;;
+;;   ;; FIXME I feel like this check is unnecessary and implied by other
+;;   ;; requirements. In other words, the memory has an ultimate local
+;;   ;; variable in a block with lifetime ℓ, and presumably we wouldn't
+;;   ;; allow that owner to gain access to data with some lifetime less
+;;   ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
+;;   ;; to allow data to be borrowed for a lifetime not currently in
+;;   ;; scope, actually.)
+;;   ;; (where ty (lvtype srs T lv))
+;;   ;; (ty-bound-by-lifetime Λ ℓ ty)
+;;   --------------------------------------------------
+;;   (path-outlives srs T Λ ℓ lv)]
+;;
+;;  )
+;;
+;;;; Holds if the memory directly referenced by `lv`
+;;;; will outlive `ℓ`.
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (path-bound-by-lifetime I   I I I I )
+;;  #:contract (path-bound-by-lifetime srs T Λ ℓ lv)
+;;
+;;  [;; FIXME must determine lifetime of x, currently not found in any map
+;;   --------------------------------------------------
+;;   (path-bound-by-lifetime srs T Λ ℓ x)]
+;;
+;;  [(path-bound-by-lifetime srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-bound-by-lifetime srs T Λ ℓ (lv · f))]
+;;
+;;  [(path-bound-by-lifetime srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-bound-by-lifetime srs T Λ ℓ (lv @ lv_i))]
+;;
+;;  [(where (~ ty) (lvtype srs T lv))
+;;   (path-bound-by-lifetime srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+;;
+;;  [(where (& ℓ_lv mq ty) (lvtype srs T lv))
+;;   (lifetime-≤ Λ ℓ ℓ_lv)
+;;   --------------------------------------------------
+;;   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; use-lv-ok and use-lvs-ok
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (use-lv-ok I   I I I I I  O  O)
+;;  #:contract (use-lv-ok srs T Λ £ ℑ lv ty ℑ)
+;;
+;;  ;; If `lv` is POD, it is not moved but rather copied.
+;;  [(where ty (lvtype srs T lv))
+;;   (can-read-from srs T Λ £ ℑ lv)
+;;   (side-condition (ty-is-pod srs ty))
+;;   --------------------------------------------------
+;;   (use-lv-ok srs T Λ £ ℑ lv ty ℑ)]
+;;
+;;  ;; Otherwise, each use deinitializes the value:
+;;  [(where ty (lvtype srs T lv))
+;;   (can-move-from srs T Λ £ ℑ lv)
+;;   (side-condition (not (ty-is-pod srs ty)))
+;;   --------------------------------------------------
+;;   (use-lv-ok srs T Λ £ ℑ lv ty (\\ ℑ (owned-subpaths lv)))]
+;;  )
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (use-lvs-ok I   I I I I I   O   O)
+;;  #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
+;;
+;;  [--------------------------------------------------
+;;   (use-lvs-ok srs T Λ £ ℑ [] [] ℑ)]
+;;
+;;  [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
+;;   (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
+;;   --------------------------------------------------
+;;   (use-lvs-ok srs T Λ £ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; rv-ok
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (rv-ok I   I I I I I  O  O O)
+;;  #:contract (rv-ok srs T Λ £ ℑ rv ty £ ℑ)
+;;
+;;  ;; copy x -- deprecated
+;;  [(where ty (lvtype srs T lv))
+;;   (can-read-from srs T Λ £ ℑ lv)
+;;   (side-condition (ty-is-pod srs ty))
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (copy lv) ty £ ℑ)]
+;;
+;;  ;; x
+;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty_out] ℑ_out)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ lv ty_out £ ℑ_out)]
+;;
+;;  ;; & ℓ imm lv
+;;  [(where ty (lvtype srs T lv))
+;;   (can-read-from srs T Λ ℑ (mut-loans £) lv)
+;;   (path-freezable-for srs T Λ ℓ lv)
+;;   (path-outlives srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (& ℓ imm lv) (& ℓ imm ty) ℑ (∪ £ [ℓ imm lv]))]
+;;
+;;  ;; & ℓ mut lv
+;;  [(where ty (lvtype srs T lv))
+;;   (can-write-to srs T Λ ℑ (mut-loans £) lv)
+;;   (path-unique-for srs T Λ ℓ lv)
+;;   (path-outlives srs T Λ ℓ lv)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (& ℓ mut lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mut lv]))]
+;;
+;;  ;; struct s ℓs [lv ...]
+;;  [(where [ty_f ...] (field-tys srs s [ℓ ...]))
+;;   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_a ...] ℑ_a)
+;;   (lifetime-in-scope Λ ℓ) ...
+;;   (subtype Λ ty_a ty_f) ...
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) £ ℑ_a)]
+;;
+;;  ;; int
+;;  [--------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ number int £ ℑ)]
+;;
+;;  ;; lv + lv
+;;  [(use-lvs-ok srs T Λ £ ℑ [lv_1 lv_2] [int int] ℑ)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (lv_1 + lv_2) int ℑ £)]
+;;
+;;  ;; (Some lv)
+;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (Some lv) (Option ty) £ ℑ_1)]
+;;
+;;  ;; (None ty)
+;;  [;; check ty well-formed
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (None ty) (Option ty) £ ℑ)]
+;;
+;;  ;; (vec ty lv ...)
+;;  [;; check ty well-formed
+;;   (where l (size [lv ...]))
+;;   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_lv ...] ℑ_1)
+;;   (subtype Λ ty_lv ty) ...
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (vec ty lv ...) (vec ty l) £ ℑ_1)]
+;;
+;;  ;; (vec-len lv ...)
+;;  [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
+;;   (can-read-from srs T Λ £ ℑ lv)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (vec-len lv) int £ ℑ)]
+;;
+;;  ;; (pack lv ty)
+;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
+;;   --------------------------------------------------
+;;   (rv-ok srs T Λ £ ℑ (pack lv ty) ty £ ℑ_1)]
+;;
+;;  )
+;;
+;;; Test you can copy an int and the value remains in the initialized set.
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok [] [[(i int)]] [] [] [i] (copy i) ty ℑ £)
+;;  (ty ℑ £))
+;; (term ((int [i] []))))
+;;
+;;; Test you cannot copy an uninitialized int.
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok [] [[(i int)]] [] [] [] (copy i) ty ℑ £)
+;;  (ty ℑ £))
+;; (term ()))
+;;
+;;; Test you cannot copy a ~int.
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok [] [[(i (~ int))]] [] [] [i] (copy i) ty ℑ £)
+;;  (ty ℑ £))
+;; (term ()))
+;;
+;;; ...But you can move it.
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok [] [[(i (~ int))]] [] [] [i] i ty ℑ £)
+;;  (ty ℑ £))
+;; (term (((~ int) [] []))))
+;;
+;;; ...Unless it is borrowed.
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok [] [[(i (~ int))]] [] [(i a [])] [i] i ty ℑ £)
+;;  (ty ℑ £))
+;; (term ()))
+;;
+;;; Test a simple, well-typed struct expression: `A { i }`
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok ,test-srs [[(i int)]] [] [] [i] (struct A [] [i]) ty ℑ £)
+;;  (ty ℑ £))
+;; (term [((struct A []) [] [])]))
+;;
+;;; Like previous, but with an invalid type for the field.
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok ,test-srs [[(i (~ int))]] [] [] [i] (struct A [] [i]) ty ℑ £)
+;;  (ty ℑ £))
+;; (term ()))
+;;
+;;; Like previous, but with an uninitialized `i`
+;;(test-equal
+;; (judgment-holds
+;;  (rv-ok ,test-srs [[(i int)]] [] [] [] (struct A [] [i]) ty ℑ £)
+;;  (ty ℑ £))
+;; (term []))
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; st-ok
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (st-ok I    I I I I I  O O)
+;;  #:contract (st-ok prog T Λ £ ℑ st ℑ £)
+;;
+;;  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
+;;   (can-init srs T Λ ℑ_rv lv)
+;;   (subtype Λ ty_rv (lvtype srs T lv))
+;;   --------------------------------------------------
+;;   (st-ok (srs fns) T Λ £ ℑ (lv = rv) £_rv (∪ ℑ_rv [lv]))]
+;;
+;;  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
+;;   (can-write-to srs T Λ £_rv ℑ_rv lv)
+;;   (subtype Λ ty_rv (lvtype srs T lv))
+;;   --------------------------------------------------
+;;   (st-ok (srs fns) T Λ £ ℑ (lv := rv) £_rv ℑ_rv)]
+;;
+;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
+;;   --------------------------------------------------
+;;   (st-ok (srs fns) T Λ £ ℑ (free lv) £ ℑ_1)]
+;;
+;;;;   [(bk-ok prog T_1 Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)
+;;;;    --------------------------------------------------
+;;;;    (st-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; bk-ok
+;;;; 
+;;;; (define-judgment-form
+;;;;   Patina-typing
+;;;;   #:mode     (bk-ok I    I I I I I  O O)
+;;;;   #:contract (bk-ok prog T Λ ℜ ℑ bk ℑ ℜ)
+;;;; 
+;;;;   [(where [vdecls_0 ...] T)
+;;;;    (where T_1 [vdecls_1 vdecls_0 ...])
+;;;;    --------------------------------------------------
+;;;;    (bk-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
+;;;; 
+;;;;   )
