@@ -82,6 +82,7 @@
   (ℓ variable-not-otherwise-mentioned)
   ;; field "names"
   (f number)
+  (fs [f ...])
   ;; z -- sizes, offsets
   [zs (z ...)]
   [z number]
@@ -485,7 +486,7 @@
   \\ : [any ...] [any ...] -> [any ...]
 
   [(\\ any_0 any_1)
-   ,(remove* any_0 any_1)])
+   ,(remove* (term any_1) (term any_0))])
 
 (test-equal (term (\\ [1 2 3] [2])) (term [1 3]))
 (test-equal (term (\\ [1 2 3] [4])) (term [1 2 3]))
@@ -1001,7 +1002,7 @@
 
   )
 
-(test-equal (term (field-tys ,test-srs C ()))
+(test-equal (term (field-names ,test-srs C ()))
             (term [0 1]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2033,6 +2034,36 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subtype
+;;
+;; FIXME
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (subtype I I I)
+  #:contract (subtype Λ ty ty)
+
+  [--------------------------------------------------
+   (subtype Λ ty ty)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lifetime-≤
+;;
+;; FIXME
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lifetime-≤ I I I)
+  #:contract (lifetime-≤ Λ ℓ ℓ)
+
+  [--------------------------------------------------
+   (lifetime-≤ Λ ℓ ℓ)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ty-is-pod
 
 (define-judgment-form
@@ -2166,7 +2197,7 @@
 ;; Helper function. Second argument is the maximal owned path found so
 ;; far.
 (define-metafunction Patina-typing
-  owning-path1 : srs T lv lv-> lv
+  owning-path1 : srs T lv lv -> lv
 
   [(owning-path1 srs T x lv_m) lv_m]
 
@@ -2199,15 +2230,18 @@
    ]
 
   [(path-and-base-paths srs T (lv · f))
-   [(lv · f) (path-and-base-paths srs T lv) ...]
+   [(lv · f) lv_1 ...]
+   (where [lv_1 ...] (path-and-base-paths srs T lv))
    ]
 
   [(path-and-base-paths srs T (lv_b @ lv_i))
-   [(lv_b @ lv_i) (path-and-base-paths srs T lv_b) ...]
+   [(lv_b @ lv_i) lv_1 ...]
+   (where [lv_1 ...] (path-and-base-paths srs T lv))
    ]
 
   [(path-and-base-paths srs T (* lv))
-   [(* lv) (path-and-base-paths srs T lv) ...]
+   [(* lv) lv_1 ...]
+   (where [lv_1 ...] (path-and-base-paths srs T lv))
    ]
 
   )
@@ -2218,12 +2252,16 @@
 (define-metafunction Patina-typing
   mut-loans : £ -> £
 
+  [(mut-loans [])
+   (mut-loans [])]
+
   [(mut-loans [(ℓ imm lv) loan ...])
    (mut-loans [loan ...])]
 
   [(mut-loans [(ℓ mut lv) loan ...])
    [(ℓ mut lv) loan_1 ...]
    (where [loan_1 ...] (mut-loans [loan ...]))]
+
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2279,7 +2317,8 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode     (unencumbered I lv)
+  #:mode     (unencumbered I I )
+  #:contract (unencumbered £ lv)
 
   [(side-condition (∉ lv (loaned-paths £)))
    --------------------------------------------------
@@ -2312,7 +2351,7 @@
   #:contract (can-move-from srs T Λ £ ℑ lv)
 
   [;; Can only move from things we own:
-   (owned-path srs ty lv)
+   (owned-path srs T lv)
 
    ;; Otherwise same as write:
    (can-write-to srs T Λ £ ℑ lv) 
@@ -2375,16 +2414,19 @@
    ]
 
   [(paths-restricted-by-loan-of srs T (lv · f))
-   [(lv · f) (paths-restricted-by-loan-of srs T Λ lv) ...]
+   [(lv · f) lv_1 ...]
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
    ]
 
   [(paths-restricted-by-loan-of srs T (lv_a @ lv_i))
-   [(lv_a @ lv_i) (paths-restricted-by-loan-of srs T Λ lv_a) ...]
+   [(lv_a @ lv_i) lv_1 ...]
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv_a))
    ]
 
   [(paths-restricted-by-loan-of srs T (* lv))
-   [(* lv) (paths-restricted-by-loan-of srs T Λ lv_a) ...]
+   [(* lv) lv_1 ...]
    (where (~ ty) (lvtype srs T lv))
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
    ]
 
   ;; If we borrowed `*x` and `x` is a `&T`, that need not prevent us
@@ -2398,8 +2440,9 @@
    ]
 
   [(paths-restricted-by-loan-of srs T (* lv))
-   [(* lv) (paths-restricted-by-loan-of srs T Λ lv_a) ...]
+   [(* lv) lv_1 ...]
    (where (& ℓ mut ty) (lvtype srs T lv))
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
    ]
 
   )
@@ -2438,8 +2481,8 @@
    --------------------------------------------------
    (path-unique-for srs T Λ ℓ (* lv))]
 
-  [(where (& ℓ' mut ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ')
+  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
    (path-unique-for srs T Λ ℓ lv)
    --------------------------------------------------
    (path-unique-for srs T Λ ℓ (* lv))]
@@ -2511,14 +2554,14 @@
    --------------------------------------------------
    (path-freezable-for srs T Λ ℓ (* lv))]
 
-  [(where (& ℓ' mut ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ')
+  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
    (path-freezable-for srs T Λ ℓ lv)
    --------------------------------------------------
    (path-freezable-for srs T Λ ℓ (* lv))]
 
-  [(where (& ℓ' imm ty) (lvtype srs T lv))
-   (lifetime-≤ Λ ℓ ℓ')
+  [(where (& ℓ_lv imm ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
    --------------------------------------------------
    (path-freezable-for srs T Λ ℓ (* lv))]
 
@@ -2548,7 +2591,7 @@
    ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
    ;;    let y = a.b;        // would read c as part
    (where [lv_r ...] (paths-restricted-by-loans srs T £_l))
-   (side-condition (∉ lv lv_r))
+   (side-condition (∉ lv [lv_r ...]))
 
    ;; Neither the path lv nor any base path of lv can be borrowed:
    ;;
@@ -2604,8 +2647,8 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode     (can-write-to I   I I I I )
-  #:contract (can-write-to srs T Λ ℑ lv)
+  #:mode     (can-init I   I I I I )
+  #:contract (can-init srs T Λ ℑ lv)
 
   [(lv-not-initialized ℑ x)
    --------------------------------------------------
@@ -2650,10 +2693,10 @@
    ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
    ;; to allow data to be borrowed for a lifetime not currently in
    ;; scope, actually.)
-   (where ty (lvtype srs T lv))
-   (ty-bound-by-lifetime Λ ℓ ty)
+   ;; (where ty (lvtype srs T lv))
+   ;; (ty-bound-by-lifetime Λ ℓ ty)
    --------------------------------------------------
-   (path-outlives srs T Λ £_l ℑ lv)]
+   (path-outlives srs T Λ ℓ lv)]
 
   )
 
@@ -2694,21 +2737,21 @@
 (define-judgment-form
   Patina-typing
   #:mode     (use-lv-ok I   I I I I I  O  O)
-  #:contract (use-ls-ok srs T Λ £ ℑ lv ty ℑ)
+  #:contract (use-lv-ok srs T Λ £ ℑ lv ty ℑ)
 
   ;; If `lv` is POD, it is not moved but rather copied.
   [(where ty (lvtype srs T lv))
    (can-read-from srs T Λ £ ℑ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
-   (use-lv-ok srs T Λ ℑ lv ty ℑ)]
+   (use-lv-ok srs T Λ £ ℑ lv ty ℑ)]
 
   ;; Otherwise, each use deinitializes the value:
   [(where ty (lvtype srs T lv))
    (can-move-from srs T Λ £ ℑ lv)
    (side-condition (not (ty-is-pod srs ty)))
    --------------------------------------------------
-   (use-lv-ok srs T Λ ℑ lv ty (\\ ℑ (owned-subpaths lv)))]
+   (use-lv-ok srs T Λ £ ℑ lv ty (\\ ℑ (owned-subpaths lv)))]
   )
 
 (define-judgment-form
@@ -2717,27 +2760,12 @@
   #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
 
   [--------------------------------------------------
-   (use-lvs-ok srs T Λ ℑ [] [] ℑ)]
+   (use-lvs-ok srs T Λ £ ℑ [] [] ℑ)]
 
   [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
    (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
    --------------------------------------------------
-   (use-lvs-ok srs T Λ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
-
-  )
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; subtype
-;;
-;; FIXME
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (subtype I I I)
-  #:contract (subtype Λ ty ty)
-
-  [--------------------------------------------------
-   (subtype Λ ty ty)]
+   (use-lvs-ok srs T Λ £ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
 
   )
 
@@ -2762,18 +2790,20 @@
    (rv-ok srs T Λ £ ℑ lv ty_out £ ℑ_out)]
 
   ;; & ℓ imm lv
-  [(can-read-from srs T Λ ℑ (mut-loans £) mq lv)
+  [(where ty (lvtype srs T lv))
+   (can-read-from srs T Λ ℑ (mut-loans £) lv)
    (path-freezable-for srs T Λ ℓ lv)
    (path-outlives srs T Λ ℓ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (& ℓ imm lv) (& ℓ imm ty) ℑ (∪ £ [ℓ mq lv]))]
+   (rv-ok srs T Λ £ ℑ (& ℓ imm lv) (& ℓ imm ty) ℑ (∪ £ [ℓ imm lv]))]
 
   ;; & ℓ mut lv
-  [(can-write-to srs T Λ ℑ (mut-loans £) mq lv)
+  [(where ty (lvtype srs T lv))
+   (can-write-to srs T Λ ℑ (mut-loans £) lv)
    (path-unique-for srs T Λ ℓ lv)
    (path-outlives srs T Λ ℓ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ £ ℑ (& ℓ mut lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mq lv]))]
+   (rv-ok srs T Λ £ ℑ (& ℓ mut lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mut lv]))]
 
   ;; struct s ℓs [lv ...]
   [(where [ty_f ...] (field-tys srs s [ℓ ...]))
@@ -2812,7 +2842,7 @@
 
   ;; (vec-len lv ...)
   [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
-   (can-read-from srs T Λ £ lv)
+   (can-read-from srs T Λ £ ℑ lv)
    --------------------------------------------------
    (rv-ok srs T Λ £ ℑ (vec-len lv) int £ ℑ)]
 
@@ -2820,7 +2850,6 @@
   [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
    --------------------------------------------------
    (rv-ok srs T Λ £ ℑ (pack lv ty) ty £ ℑ_1)]
-
 
   )
 
@@ -2894,11 +2923,11 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ £ ℑ (lv = rv) £_rv (∪ ℑ_rv [lv]))]
 
-  [(rv-ok srs T Λ £ ℑ rv ty_rv (lv_rv ...) £_rv ℑ_rv)
+  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
    (can-write-to srs T Λ £_rv ℑ_rv lv)
    (subtype Λ ty_rv (lvtype srs T lv))
    --------------------------------------------------
-   (st-ok (srs fns) T Λ ℜ ℑ (lv := rv) £_rv ℑ_rv)]
+   (st-ok (srs fns) T Λ £ ℑ (lv := rv) £_rv ℑ_rv)]
 
   [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
    --------------------------------------------------
