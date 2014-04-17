@@ -2426,85 +2426,75 @@
  (term (owned-subpaths ,test-srs ,test-T r))
  (term [r (* r)]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-move-from
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; paths-restricted-by-loans
 ;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-move-from I   I I I I I )
-;;  #:contract (can-move-from srs T Λ £ ℑ lv)
+;; If a loan affects the lvalue `lv`, this function returns a set of
+;; paths for `lv` that are *restricted* as a result. A path is
+;; restricted if accessing it would violate the terms of the loan.
 ;;
-;;  [;; Can only move from things we own:
-;;   (owned-path srs T lv)
-;;
-;;   ;; Otherwise same as write:
-;;   (can-write-to srs T Λ £ ℑ lv) 
-;;   --------------------------------------------------
-;;   (can-move-from srs T Λ £ ℑ lv)]
-;;
-;;  )
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; restricted-paths
-;;;;
-;;;; If a loan affects the lvalue `lv`, this function returns a set of
-;;;; paths for `lv` that are *restricted* as a result. A path is
-;;;; restricted if accessing it would violate the terms of the loan.
-;;;;
-;;;; More concretely, for a mutable loan of `lv`, `restricted-paths lv`
-;;;; yields the set of paths that cannot be read or written as a result.
-;;;; This includes not only `lv` itself but base paths of `lv`, because
-;;;; reading those paths would either copy `lv` (as part of a larger
-;;;; copy) or else create a second path to the same memory that was
-;;;; borrowed. Similar concerns hold for writing.
-;;
-;;(define-metafunction Patina-machine
-;;  paths-restricted-by-loan-of : srs T lv -> lvs
-;;
-;;  [(paths-restricted-by-loan-of srs T x)
-;;   [x]
-;;   ]
-;;
-;;  [(paths-restricted-by-loan-of srs T (lv · f))
-;;   [(lv · f) lv_1 ...]
-;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
-;;   ]
-;;
-;;  [(paths-restricted-by-loan-of srs T (lv_a @ lv_i))
-;;   [(lv_a @ lv_i) lv_1 ...]
-;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv_a))
-;;   ]
-;;
-;;  [(paths-restricted-by-loan-of srs T (* lv))
-;;   [(* lv) lv_1 ...]
-;;   (where (~ ty) (lvtype srs T lv))
-;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
-;;   ]
-;;
-;;  ;; If we borrowed `*x` and `x` is a `&T`, that need not prevent us
-;;  ;; from reading (or writing) `x`. I would eventually like to extend
-;;  ;; this rule to handle writes to &mut borrowed lvalues too, but that
-;;  ;; needs a bit more infrastructure and for time being I want to
-;;  ;; model what rustc currently allows (or should allow).
-;;  [(paths-restricted-by-loan-of srs T (* lv))
-;;   [(* lv)]
-;;   (where (& ℓ imm ty) (lvtype srs T lv))
-;;   ]
-;;
-;;  [(paths-restricted-by-loan-of srs T (* lv))
-;;   [(* lv) lv_1 ...]
-;;   (where (& ℓ mut ty) (lvtype srs T lv))
-;;   (where [lv_1 ...] (paths-restricted-by-loan-of srs T Λ lv))
-;;   ]
-;;
-;;  )
-;;
-;;(define-metafunction Patina-machine
-;;  paths-restricted-by-loans : srs T £ -> lvs
-;;
-;;  [(paths-restricted-by-loans srs T [(ℓ mq lv) ...])
-;;   ,(flatten (term [(paths-restricted-by-loan-of srs T Λ lv) ...]))])
-;;
+;; More concretely, for a mutable loan of `lv`, `restricted-paths lv`
+;; yields the set of paths that cannot be read or written as a result.
+;; This includes not only `lv` itself but base paths of `lv`, because
+;; reading those paths would either copy `lv` (as part of a larger
+;; copy) or else create a second path to the same memory that was
+;; borrowed. Similar concerns hold for writing.
+
+(define-metafunction Patina-machine
+  paths-restricted-by-loans : srs T £ -> lvs
+
+  [(paths-restricted-by-loans srs T [(ℓ mq lv) ...])
+   ,(flatten (term [(paths-restricted-by-loan-of srs T lv) ...]))])
+
+(define-metafunction Patina-machine
+  paths-restricted-by-loan-of : srs T lv -> lvs
+
+  [(paths-restricted-by-loan-of srs T x)
+   [x]
+   ]
+
+  [(paths-restricted-by-loan-of srs T (lv · f))
+   [(lv · f) lv_1 ...]
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T lv))
+   ]
+
+  [(paths-restricted-by-loan-of srs T (lv_a @ lv_i))
+   [(lv_a @ lv_i) lv_1 ...]
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T lv_a))
+   ]
+
+  [(paths-restricted-by-loan-of srs T (* lv))
+   [(* lv) lv_1 ...]
+   (where (~ ty) (lvtype srs T lv))
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T lv))
+   ]
+
+  ;; If we borrowed `*x` and `x` is a `&T`, that need not prevent us
+  ;; from reading (or writing) `x`. I would eventually like to extend
+  ;; this rule to handle writes to &mut borrowed lvalues too, but that
+  ;; needs a bit more infrastructure and for time being I want to
+  ;; model what rustc currently allows (or should allow).
+  [(paths-restricted-by-loan-of srs T (* lv))
+   [(* lv)]
+   (where (& ℓ imm ty) (lvtype srs T lv))
+   ]
+
+  [(paths-restricted-by-loan-of srs T (* lv))
+   [(* lv) lv_1 ...]
+   (where (& ℓ mut ty) (lvtype srs T lv))
+   (where [lv_1 ...] (paths-restricted-by-loan-of srs T lv))
+   ]
+
+  )
+
+(test-equal
+ (term (paths-restricted-by-loan-of ,test-srs ,test-T (* (b · 1))))
+ (term [(* (b · 1)) (b · 1) b]))
+
+(test-equal
+ (term (paths-restricted-by-loan-of ,test-srs ,test-T (* q)))
+ (term [(* q)]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; path-unique-for srs T Λ ℓ lv
 ;;;;
@@ -2538,6 +2528,24 @@
 ;;   (path-unique-for srs T Λ ℓ lv)
 ;;   --------------------------------------------------
 ;;   (path-unique-for srs T Λ ℓ (* lv))]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-move-from
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-move-from I   I I I I I )
+;;  #:contract (can-move-from srs T Λ £ ℑ lv)
+;;
+;;  [;; Can only move from things we own:
+;;   (owned-path srs T lv)
+;;
+;;   ;; Otherwise same as write:
+;;   (can-write-to srs T Λ £ ℑ lv) 
+;;   --------------------------------------------------
+;;   (can-move-from srs T Λ £ ℑ lv)]
 ;;
 ;;  )
 ;;
