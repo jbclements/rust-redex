@@ -2262,24 +2262,28 @@
  (term (path-and-base-paths (* (b · 1))))
  (term [(* (b · 1)) (b · 1) b]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; mut-loans £
-;;
-;;(define-metafunction Patina-typing
-;;  mut-loans : £ -> £
-;;
-;;  [(mut-loans [])
-;;   (mut-loans [])]
-;;
-;;  [(mut-loans [(ℓ imm lv) loan ...])
-;;   (mut-loans [loan ...])]
-;;
-;;  [(mut-loans [(ℓ mut lv) loan ...])
-;;   [(ℓ mut lv) loan_1 ...]
-;;   (where [loan_1 ...] (mut-loans [loan ...]))]
-;;
-;;  )
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; mut-loans £
+
+(define-metafunction Patina-typing
+  mut-loans : £ -> £
+
+  [(mut-loans [])
+   []]
+
+  [(mut-loans [(ℓ imm lv) loan ...])
+   (mut-loans [loan ...])]
+
+  [(mut-loans [(ℓ mut lv) loan ...])
+   [(ℓ mut lv) loan_1 ...]
+   (where [loan_1 ...] (mut-loans [loan ...]))]
+
+  )
+
+(test-equal
+ (term (mut-loans [(a imm x) (b mut y) (c imm z) (d mut a)]))
+ (term [(b mut y) (d mut a)]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; lifetime-in-scope Λ ℓ
 ;;;;
