@@ -2284,84 +2284,148 @@
  (term (mut-loans [(a imm x) (b mut y) (c imm z) (d mut a)]))
  (term [(b mut y) (d mut a)]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; lifetime-in-scope Λ ℓ
-;;;;
-;;;; Holds if the lifetime ℓ is in scope
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lifetime-in-scope Λ ℓ
 ;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (lifetime-in-scope I I)
-;;  #:contract (lifetime-in-scope Λ ℓ)
+;; Holds if the lifetime ℓ is in scope
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lifetime-in-scope I I)
+  #:contract (lifetime-in-scope Λ ℓ)
+
+  [(side-condition (∈ ℓ (in-scope-lifetimes Λ)))
+   --------------------------------------------------
+   (lifetime-in-scope Λ ℓ)]
+
+  )
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [(a []) (b [])] a))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [(a []) (b [])] b))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [(a []) (b [])] c))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ty-bound-by-lifetime Λ ℓ ty
 ;;
-;;  [(side-condition (∈ ℓ (in-scope-lifetimes Λ)))
-;;   --------------------------------------------------
-;;   (lifetime-in-scope Λ ℓ)]
+;; If this judgement holds, then the type `ty` is bound by the
+;; lifetime ℓ.
 ;;
-;;  )
+;; FIXME
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (ty-bound-by-lifetime I I I )
+  #:contract (ty-bound-by-lifetime Λ ℓ ty)
+
+  [--------------------------------------------------
+   (ty-bound-by-lifetime Λ ℓ ty)]
+
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; unencumbered £ lv
 ;;
-;;(test-equal
-;; (judgment-holds (lifetime-in-scope [(a []) (b [])] a))
-;; #t)
+;; True if lv has not been loaned out.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (unencumbered I I )
+  #:contract (unencumbered £ lv)
+
+  [(side-condition (∉ lv (loaned-paths £)))
+   --------------------------------------------------
+   (unencumbered £ lv)]
+
+  )
+
+(test-equal
+ (judgment-holds (unencumbered [(a imm x)] y))
+ #t)
+
+(test-equal
+ (judgment-holds (unencumbered [(a imm x)] x))
+ #f)
+
+(test-equal
+ (judgment-holds (unencumbered [(a imm x)] (* x)))
+ #t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; owned-path srs T lv
 ;;
-;;(test-equal
-;; (judgment-holds (lifetime-in-scope [(a []) (b [])] b))
-;; #t)
+;; Holds if the path `lv` is an *owned path*.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (owned-path I   I I )
+  #:contract (owned-path srs T lv)
+
+  [(where lv (owning-path srs T lv))
+   --------------------------------------------------
+   (owned-path srs T lv)]
+
+  )
+
+(test-equal
+ (judgment-holds (owned-path ,test-srs ,test-T (* (b · 1))))
+ #f)
+
+(test-equal
+ (judgment-holds (owned-path ,test-srs ,test-T (b · 1)))
+ #t)
+
+(test-equal
+ (judgment-holds (owned-path ,test-srs ,test-T (* r)))
+ #t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; owned-subpaths
 ;;
-;;(test-equal
-;; (judgment-holds (lifetime-in-scope [(a []) (b [])] c))
-;; #f)
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; lifetime-bound Λ ℓ ty
-;;;;
-;;;; If this judgement holds, then the type `ty` is bound by the
-;;;; lifetime ℓ.
-;;;;
-;;;; FIXME
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (lifetime-bound I I I )
-;;  #:contract (lifetime-bound Λ ℓ ty)
-;;
-;;  [--------------------------------------------------
-;;   (lifetime-bound Λ ℓ ty)]
-;;
-;;  )
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; unencumbered £ lv
-;;;;
-;;;; True if lv has not been loaned out.
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (unencumbered I I )
-;;  #:contract (unencumbered £ lv)
-;;
-;;  [(side-condition (∉ lv (loaned-paths £)))
-;;   --------------------------------------------------
-;;   (unencumbered £ lv)]
-;;
-;;  )
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; owned-path srs T lv
-;;;;
-;;;; Holds if the path `lv` is an *owned path*.
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (owned-path I   I I )
-;;  #:contract (owned-path srs T lv)
-;;
-;;  [(where lv (owning-path srs T lv))
-;;   --------------------------------------------------
-;;   (owned-path srs T lv)]
-;;
-;;  )
-;;
+;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
+;; as appropriate for the type of `lv`
+
+(define-metafunction Patina-machine
+  owned-subpaths : srs T lv -> [lv ...]
+  
+  [(owned-subpaths srs T lv)
+   [lv lv_1 ... lv_2 ...]
+   (where [lv_1 ...] (owned-subpaths1 srs T lv))
+   (where [lv_2 ...] ,(flatten (term [(owned-subpaths1 srs T lv_1) ...])))
+   ]
+  )
+
+(define-metafunction Patina-machine
+  owned-subpaths1 : srs T lv -> [lv ...]
+
+  [(owned-subpaths1 srs T lv)
+   [(lv · f) ...]
+   (where (struct s ℓs) (lvtype srs T lv))
+   (where [f ...] (field-names srs s ℓs))]
+
+  [(owned-subpaths1 srs T lv)
+   [(* lv)]
+   (where (~ ty) (lvtype srs T lv))]
+  
+  [(owned-subpaths1 srs T lv)
+   []]
+  )
+
+(test-equal
+ (term (owned-subpaths ,test-srs ,test-T b))
+ (term [b (b · 0) (b · 1)]))
+
+(test-equal
+ (term (owned-subpaths ,test-srs ,test-T r))
+ (term [r (* r)]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; can-move-from
 ;;
@@ -2378,38 +2442,6 @@
 ;;   --------------------------------------------------
 ;;   (can-move-from srs T Λ £ ℑ lv)]
 ;;
-;;  )
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; owned-subpaths
-;;;;
-;;;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
-;;;; as appropriate for the type of `lv`
-;;
-;;(define-metafunction Patina-machine
-;;  owned-subpaths : srs T lv -> [lv ...]
-;;  
-;;  [(owned-subpaths srs T lv)
-;;   [lv lv_1 ... lv_2 ...]
-;;   (where [lv_1 ...] (owned-subpaths1 srs T lv))
-;;   (where [lv_2 ...] ,(flatten (term [(owned-subpaths1 srs T lv_1) ...])))
-;;   ]
-;;  )
-;;
-;;(define-metafunction Patina-machine
-;;  owned-subpaths1 : srs T lv -> [lv ...]
-;;
-;;  [(owned-subpaths1 srs T lv)
-;;   [(lv · f) ...]
-;;   (where (struct s ℓs) (lvtype srs T lv))
-;;   (where [f ...] (field-names srs s ℓs))]
-;;
-;;  [(owned-subpaths1 srs T lv)
-;;   [(* lv)]
-;;   (where (~ ty) (lvtype srs T lv))]
-;;  
-;;  [(owned-subpaths1 srs T lv)
-;;   []]
 ;;  )
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2713,8 +2745,8 @@
 ;;   ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
 ;;   ;; to allow data to be borrowed for a lifetime not currently in
 ;;   ;; scope, actually.)
-;;   ;; (where ty (lvtype srs T lv))
-;;   ;; (ty-bound-by-lifetime Λ ℓ ty)
+;;   (where ty (lvtype srs T lv))
+;;   (ty-bound-by-lifetime Λ ℓ ty)
 ;;   --------------------------------------------------
 ;;   (path-outlives srs T Λ ℓ lv)]
 ;;
