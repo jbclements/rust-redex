@@ -494,6 +494,21 @@
 (test-equal (term (\\ [1 2 3] [4])) (term [1 2 3]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; has -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
+
+(define-metafunction Patina-machine
+  has : any [(any any) ...] -> any
+
+  [(has any_k0 [(any_k0 any_v0) (any_k1 any_v1) ...])
+   #t]
+
+  [(has any_k0 [])
+   #f]
+
+  [(has any_k0 [(any_k1 any_v1) (any_k2 any_v2) ...])
+   (has any_k0 [(any_k2 any_v2) ...])])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
 
 (define-metafunction Patina-machine
@@ -2127,7 +2142,8 @@
   [--------------------------------------------------
    (lifetime-≤ Λ ℓ static)]
 
-  [(where ℓs (get ℓ_a Λ))
+  [(side-condition (has ℓ_a Λ))
+   (where ℓs (get ℓ_a Λ))
    (side-condition (∈ ℓ_b ℓs))
    --------------------------------------------------
    (lifetime-≤ Λ ℓ_a ℓ_b)]
@@ -3015,6 +3031,66 @@
                            [owned-B] (* owned-B)))
  #t)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-bound-by-lifetime
+;;
+;; Holds if the memory directly referenced by `lv`
+;; will outlive `ℓ`.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (path-bound-by-lifetime I   I I I I )
+  #:contract (path-bound-by-lifetime srs T Λ ℓ lv)
+
+  [;; FIXME must determine lifetime of x, currently not found in any map
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ x)]
+
+  [(path-bound-by-lifetime srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (lv · f))]
+
+  [(path-bound-by-lifetime srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (lv @ lv_i))]
+
+  [(where (~ ty) (lvtype srs T lv))
+   (path-bound-by-lifetime srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ_lv mq ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
+   --------------------------------------------------
+   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+
+  )
+
+(test-equal
+ (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+                                         static (* ((* pmut) · 1))))
+ #t)
+
+(test-equal
+ (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+                                         a (* ((* pmut) · 1))))
+ #t)
+
+(test-equal
+ (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+                                         static (* pmut)))
+ #f)
+
+(test-equal
+ (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+                                         a (* pmut)))
+ #f)
+
+(test-equal
+ (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+                                         b (* pmut)))
+ #t)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; path-outlives
 ;;
@@ -3045,37 +3121,6 @@
 ;;   (ty-bound-by-lifetime Λ ℓ ty)
 ;;   --------------------------------------------------
 ;;   (path-outlives srs T Λ ℓ lv)]
-;;
-;;  )
-;;
-;;;; Holds if the memory directly referenced by `lv`
-;;;; will outlive `ℓ`.
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (path-bound-by-lifetime I   I I I I )
-;;  #:contract (path-bound-by-lifetime srs T Λ ℓ lv)
-;;
-;;  [;; FIXME must determine lifetime of x, currently not found in any map
-;;   --------------------------------------------------
-;;   (path-bound-by-lifetime srs T Λ ℓ x)]
-;;
-;;  [(path-bound-by-lifetime srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-bound-by-lifetime srs T Λ ℓ (lv · f))]
-;;
-;;  [(path-bound-by-lifetime srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-bound-by-lifetime srs T Λ ℓ (lv @ lv_i))]
-;;
-;;  [(where (~ ty) (lvtype srs T lv))
-;;   (path-bound-by-lifetime srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
-;;
-;;  [(where (& ℓ_lv mq ty) (lvtype srs T lv))
-;;   (lifetime-≤ Λ ℓ ℓ_lv)
-;;   --------------------------------------------------
-;;   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
 ;;
 ;;  )
 ;;
