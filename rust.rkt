@@ -2656,102 +2656,104 @@
                                   a (* ((* pmut) · 1))))
  #f)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-move-from
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-freezable-for srs T Λ ℓ lv
 ;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-move-from I   I I I I I )
-;;  #:contract (can-move-from srs T Λ £ ℑ lv)
+;; Holds if the path `lv` is a *freezable path* during the lifetime ℓ.
+;; I am not quite sure how best to phrase this predicate in English.
+;; Roughly speaking, the path-freezable-for predicte guarantees that the
+;; memory which `lv` evaluates to will not be mutated during the
+;; lifetime ℓ, assuming that the path `lv` is not itself assigned to
+;; (if that is even possible). Often this corresponds to the underlying
+;; memory referenced by `lv` but not always.
 ;;
-;;  [;; Can only move from things we own:
-;;   (owned-path srs T lv)
+;; Here are some interesting and representative examples:
 ;;
-;;   ;; Otherwise same as write:
-;;   (can-write-to srs T Λ £ ℑ lv) 
-;;   --------------------------------------------------
-;;   (can-move-from srs T Λ £ ℑ lv)]
+;; 1. `fn foo(x: &'a &'b mut T) -> &'a T { &**x }`
 ;;
-;;  )
+;;     This example is legal because the path **x is freezable-for the
+;;     lifetime 'a. If however the return type were `&'b T`, the
+;;     example would be an error, because `**x` is not freezable-for
+;;     'b. This is true *even though* we know that the memory will not yet
+;;     be freed.
 ;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; path-freezable-for srs T Λ ℓ lv
-;;;;
-;;;; Holds if the path `lv` is a *freezable path* during the lifetime ℓ.
-;;;; I am not quite sure how best to phrase this predicate in English.
-;;;; Roughly speaking, the path-freezable-for predicte guarantees that the
-;;;; memory which `lv` evaluates to will not be mutated during the
-;;;; lifetime ℓ, assuming that the path `lv` is not itself assigned to
-;;;; (if that is even possible). Often this corresponds to the underlying
-;;;; memory referenced by `lv` but not always.
-;;;;
-;;;; Here are some interesting and representative examples:
-;;;;
-;;;; 1. `fn foo(x: &'a &'b mut T) -> &'a T { &**x }`
-;;;;
-;;;;     This example is legal because the path **x is freezable-for the
-;;;;     lifetime 'a. If however the return type were `&'b T`, the
-;;;;     example would be an error, because `**x` is not freezable-for
-;;;;     'b. This is true *even though* we know that the memory will not yet
-;;;;     be freed.
-;;;;
-;;;;     The reason is that, so long as the `&mut` *x is considered
-;;;;     aliased, it cannot be changed. But that alias expires after 'a,
-;;;;     and hence the memory in 'b would be considered mutable
-;;;;     again.
-;;;;
-;;;; 2. `fn foo(x: &'a mut T) -> &'a T { &*x }`
-;;;;
-;;;;     In this case, the path `*x` is freezable-for the lifetime `'a`.
-;;;;     The reason is that `x` is the only pointer that can mutate `*x`
-;;;;     during the lifetime `'a`, and hence if we freeze `*x` we can be
-;;;;     sure that the memory will not change until after `'a`.
-;;;;
-;;;; 3. `fn foo() -> &'a int { let x = 3; &x }`
-;;;;
-;;;;     Naturally, this case yields an error, but NOT because of
-;;;;     freezable-for. This is crucial to the previous two examples, in
-;;;;     fact. The idea here is that while the memory pointed at by `x`
-;;;;     isn't valid for the entire lifetime 'a, if we ignore memory
-;;;;     reuse, we can still say that it won't be assigned to. I'm not
-;;;;     sure how best to express this part in English. Maybe this rule
-;;;;     can be made more tidy. In any case, there is another predicate
-;;;;     `path-outlives` that would catch this sort of error.
+;;     The reason is that, so long as the `&mut` *x is considered
+;;     aliased, it cannot be changed. But that alias expires after 'a,
+;;     and hence the memory in 'b would be considered mutable
+;;     again.
 ;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (path-freezable-for I   I I I I )
-;;  #:contract (path-freezable-for srs T Λ ℓ lv)
+;; 2. `fn foo(x: &'a mut T) -> &'a T { &*x }`
 ;;
-;;  [--------------------------------------------------
-;;   (path-freezable-for srs T Λ ℓ x)]
+;;     In this case, the path `*x` is freezable-for the lifetime `'a`.
+;;     The reason is that `x` is the only pointer that can mutate `*x`
+;;     during the lifetime `'a`, and hence if we freeze `*x` we can be
+;;     sure that the memory will not change until after `'a`.
 ;;
-;;  [(path-freezable-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-freezable-for srs T Λ ℓ (lv · f))]
+;; 3. `fn foo() -> &'a int { let x = 3; &x }`
 ;;
-;;  [(path-freezable-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-freezable-for srs T Λ ℓ (lv @ lv_1))]
-;;
-;;  [(where (~ ty) (lvtype srs T lv))
-;;   (path-freezable-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-freezable-for srs T Λ ℓ (* lv))]
-;;
-;;  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
-;;   (lifetime-≤ Λ ℓ ℓ_lv)
-;;   (path-freezable-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-freezable-for srs T Λ ℓ (* lv))]
-;;
-;;  [(where (& ℓ_lv imm ty) (lvtype srs T lv))
-;;   (lifetime-≤ Λ ℓ ℓ_lv)
-;;   --------------------------------------------------
-;;   (path-freezable-for srs T Λ ℓ (* lv))]
-;;
-;;  )
-;;
+;;     Naturally, this case yields an error, but NOT because of
+;;     freezable-for. This is crucial to the previous two examples, in
+;;     fact. The idea here is that while the memory pointed at by `x`
+;;     isn't valid for the entire lifetime 'a, if we ignore memory
+;;     reuse, we can still say that it won't be assigned to. I'm not
+;;     sure how best to express this part in English. Maybe this rule
+;;     can be made more tidy. In any case, there is another predicate
+;;     `path-outlives` that would catch this sort of error.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (path-freezable-for I   I I I I )
+  #:contract (path-freezable-for srs T Λ ℓ lv)
+
+  [--------------------------------------------------
+   (path-freezable-for srs T Λ ℓ x)]
+
+  [(path-freezable-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (lv · f))]
+
+  [(path-freezable-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (lv @ lv_1))]
+
+  [(where (~ ty) (lvtype srs T lv))
+   (path-freezable-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
+   (path-freezable-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ_lv imm ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
+   --------------------------------------------------
+   (path-freezable-for srs T Λ ℓ (* lv))]
+
+  )
+
+(test-equal
+ (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
+                                     b pimm))
+ #t)
+
+(test-equal
+ (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
+                                     b (* ((* pimm) · 1))))
+ #t)
+
+(test-equal
+ (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
+                                     b (* ((* pmut) · 1))))
+ #t)
+
+(test-equal
+ (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
+                                     a (* ((* pmut) · 1))))
+ #f)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; can-access
 ;;
@@ -2824,6 +2826,24 @@
 ;;   (can-access srs T Λ £ ℑ lv)
 ;;   --------------------------------------------------
 ;;   (can-write-to srs T Λ £ ℑ lv)]
+;;
+;;  )
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; can-move-from
+;;
+;;(define-judgment-form
+;;  Patina-typing
+;;  #:mode     (can-move-from I   I I I I I )
+;;  #:contract (can-move-from srs T Λ £ ℑ lv)
+;;
+;;  [;; Can only move from things we own:
+;;   (owned-path srs T lv)
+;;
+;;   ;; Otherwise same as write:
+;;   (can-write-to srs T Λ £ ℑ lv) 
+;;   --------------------------------------------------
+;;   (can-move-from srs T Λ £ ℑ lv)]
 ;;
 ;;  )
 ;;
