@@ -2418,6 +2418,9 @@
   #:mode     (lifetime-in-scope I I)
   #:contract (lifetime-in-scope Λ ℓ)
 
+  [--------------------------------------------------
+   (lifetime-in-scope Λ static)]
+
   [(side-condition (∈ ℓ (in-scope-lifetimes Λ)))
    --------------------------------------------------
    (lifetime-in-scope Λ ℓ)]
@@ -2435,6 +2438,10 @@
 (test-equal
  (judgment-holds (lifetime-in-scope [(a []) (b [])] c))
  #f)
+
+(test-equal
+ (judgment-holds (lifetime-in-scope [] static))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ty-bound-by-lifetime Λ ℓ ty
@@ -2670,11 +2677,23 @@
 
   )
 
-(define test-put-T (term [[(pimm (& b imm (struct B (static))))
+(define test-put-Λ (term [(a []) (b [a]) (c [a])]))
+(define test-put-T (term [[;; block a
+                           ]
+                          [;; block b
+                           (pimm (& b imm (struct B (static))))
                            (pmut (& b mut (struct B (static))))
                            (owned-B (~ (struct B (static))))
-                           ]]))
-(define test-put-Λ (term [(a []) (b [a]) (c [a])]))
+                           ]
+                          ]))
+(define test-put-VL (term [[;; block a
+                            ]
+                           [;; block b
+                            (pimm b)
+                            (pmut b)
+                            (owned-B b)
+                            ]
+                           ]))
 
 (test-equal
  (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
@@ -3039,56 +3058,68 @@
 
 (define-judgment-form
   Patina-typing
-  #:mode     (path-valid-for-lifetime I   I I I I )
-  #:contract (path-valid-for-lifetime srs T Λ ℓ lv)
+  #:mode     (path-valid-for-lifetime I   I I I  I I )
+  #:contract (path-valid-for-lifetime srs T Λ VL ℓ lv)
 
-  [;; FIXME must determine lifetime of x, currently not found in any map
+  [(where ℓ_x (get* x VL))
+   (lifetime-≤ Λ ℓ ℓ_x)
    --------------------------------------------------
-   (path-valid-for-lifetime srs T Λ ℓ x)]
+   (path-valid-for-lifetime srs T Λ VL ℓ x)]
 
-  [(path-valid-for-lifetime srs T Λ ℓ lv)
+  [(path-valid-for-lifetime srs T Λ VL ℓ lv)
    --------------------------------------------------
-   (path-valid-for-lifetime srs T Λ ℓ (lv · f))]
+   (path-valid-for-lifetime srs T Λ VL ℓ (lv · f))]
 
-  [(path-valid-for-lifetime srs T Λ ℓ lv)
+  [(path-valid-for-lifetime srs T Λ VL ℓ lv)
    --------------------------------------------------
-   (path-valid-for-lifetime srs T Λ ℓ (lv @ lv_i))]
+   (path-valid-for-lifetime srs T Λ VL ℓ (lv @ lv_i))]
 
   [(where (~ ty) (lvtype srs T lv))
-   (path-valid-for-lifetime srs T Λ ℓ lv)
+   (path-valid-for-lifetime srs T Λ VL ℓ lv)
    --------------------------------------------------
-   (path-valid-for-lifetime srs T Λ ℓ (* lv))]
+   (path-valid-for-lifetime srs T Λ VL ℓ (* lv))]
 
   [(where (& ℓ_lv mq ty) (lvtype srs T lv))
    (lifetime-≤ Λ ℓ ℓ_lv)
    --------------------------------------------------
-   (path-valid-for-lifetime srs T Λ ℓ (* lv))]
+   (path-valid-for-lifetime srs T Λ VL ℓ (* lv))]
 
   )
 
 (test-equal
- (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
-                                         static (* ((* pmut) · 1))))
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  static (* ((* pmut) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
-                                         a (* ((* pmut) · 1))))
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  static pmut))
+ #f)
+
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  a (* ((* pmut) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
-                                         static (* pmut)))
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  static (* pmut)))
  #f)
 
 (test-equal
- (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
-                                         a (* pmut)))
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  a (* pmut)))
  #f)
 
 (test-equal
- (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
-                                         b (* pmut)))
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  b (* pmut)))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
