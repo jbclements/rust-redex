@@ -2841,54 +2841,102 @@
                              [(a mut pimm)] [pimm pmut] pmut))
  #t)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-read-from
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-read-from I   I I I I I )
-;;  #:contract (can-read-from srs T Λ £ ℑ lv)
-;;
-;;  [;; Only mutable loans prevent reads:
-;;   (can-access srs T Λ (mut-loans £) ℑ lv)
-;;   --------------------------------------------------
-;;   (can-read-from srs T Λ £ ℑ lv)]
-;;
-;;  )
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-write-to
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-write-to I   I I I I I )
-;;  #:contract (can-write-to srs T Λ £ ℑ lv)
-;;
-;;  [;; All loans prevent writes:
-;;   (can-access srs T Λ £ ℑ lv)
-;;   --------------------------------------------------
-;;   (can-write-to srs T Λ £ ℑ lv)]
-;;
-;;  )
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-move-from
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-move-from I   I I I I I )
-;;  #:contract (can-move-from srs T Λ £ ℑ lv)
-;;
-;;  [;; Can only move from things we own:
-;;   (owned-path srs T lv)
-;;
-;;   ;; Otherwise same as write:
-;;   (can-write-to srs T Λ £ ℑ lv) 
-;;   --------------------------------------------------
-;;   (can-move-from srs T Λ £ ℑ lv)]
-;;
-;;  )
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-read-from
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-read-from I   I I I I I )
+  #:contract (can-read-from srs T Λ £ ℑ lv)
+
+  [;; Only mutable loans prevent reads:
+   (can-access srs T Λ (mut-loans £) ℑ lv)
+   --------------------------------------------------
+   (can-read-from srs T Λ £ ℑ lv)]
+
+  )
+
+;; imm loans do not prevent reads
+(test-equal
+ (judgment-holds (can-read-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(a imm pimm)] [pimm] pimm))
+ #t)
+
+;; but mut loans do
+(test-equal
+ (judgment-holds (can-read-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(a mut pimm)] [pimm] pimm))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-write-to
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-write-to I   I I I I I )
+  #:contract (can-write-to srs T Λ £ ℑ lv)
+
+  [;; All loans prevent writes:
+   (can-access srs T Λ £ ℑ lv)
+   --------------------------------------------------
+   (can-write-to srs T Λ £ ℑ lv)]
+
+  )
+
+;; imm loans do prevent writes
+(test-equal
+ (judgment-holds (can-write-to ,test-srs ,test-put-T ,test-put-Λ
+                               [(a imm pimm)] [pimm] pimm))
+ #f)
+
+;; as do mut loans
+(test-equal
+ (judgment-holds (can-write-to ,test-srs ,test-put-T ,test-put-Λ
+                               [(a mut pimm)] [pimm] pimm))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-move-from
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-move-from I   I I I I I )
+  #:contract (can-move-from srs T Λ £ ℑ lv)
+
+  [;; Can only move from things we own:
+   (owned-path srs T lv)
+
+   ;; Otherwise same as write:
+   (can-write-to srs T Λ £ ℑ lv) 
+   --------------------------------------------------
+   (can-move-from srs T Λ £ ℑ lv)]
+
+  )
+
+;; imm loans prevent moves
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(a imm pimm)] [pimm] pimm))
+ #f)
+
+;; as do mut loans
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(a mut pimm)] [pimm] pimm))
+ #f)
+
+;; otherwise ok
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [pimm] pimm))
+ #t)
+
+;; but can't move from deref of borrowed pointer
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [pimm] (* pimm)))
+ #f)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; can-init
 ;;
