@@ -3032,62 +3032,62 @@
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; path-bound-by-lifetime
+;; path-valid-for-lifetime
 ;;
 ;; Holds if the memory directly referenced by `lv`
 ;; will outlive `ℓ`.
 
 (define-judgment-form
   Patina-typing
-  #:mode     (path-bound-by-lifetime I   I I I I )
-  #:contract (path-bound-by-lifetime srs T Λ ℓ lv)
+  #:mode     (path-valid-for-lifetime I   I I I I )
+  #:contract (path-valid-for-lifetime srs T Λ ℓ lv)
 
   [;; FIXME must determine lifetime of x, currently not found in any map
    --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ x)]
+   (path-valid-for-lifetime srs T Λ ℓ x)]
 
-  [(path-bound-by-lifetime srs T Λ ℓ lv)
+  [(path-valid-for-lifetime srs T Λ ℓ lv)
    --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (lv · f))]
+   (path-valid-for-lifetime srs T Λ ℓ (lv · f))]
 
-  [(path-bound-by-lifetime srs T Λ ℓ lv)
+  [(path-valid-for-lifetime srs T Λ ℓ lv)
    --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (lv @ lv_i))]
+   (path-valid-for-lifetime srs T Λ ℓ (lv @ lv_i))]
 
   [(where (~ ty) (lvtype srs T lv))
-   (path-bound-by-lifetime srs T Λ ℓ lv)
+   (path-valid-for-lifetime srs T Λ ℓ lv)
    --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+   (path-valid-for-lifetime srs T Λ ℓ (* lv))]
 
   [(where (& ℓ_lv mq ty) (lvtype srs T lv))
    (lifetime-≤ Λ ℓ ℓ_lv)
    --------------------------------------------------
-   (path-bound-by-lifetime srs T Λ ℓ (* lv))]
+   (path-valid-for-lifetime srs T Λ ℓ (* lv))]
 
   )
 
 (test-equal
- (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
                                          static (* ((* pmut) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
                                          a (* ((* pmut) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
                                          static (* pmut)))
  #f)
 
 (test-equal
- (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
                                          a (* pmut)))
  #f)
 
 (test-equal
- (judgment-holds (path-bound-by-lifetime ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (path-valid-for-lifetime ,test-srs ,test-put-T ,test-put-Λ
                                          b (* pmut)))
  #t)
 
@@ -3106,7 +3106,7 @@
 ;;   (lifetime-in-scope Λ ℓ)
 ;;
 ;;   ;; Determine from the path whether we be sure that the path outlives ℓ.
-;;   (path-bound-by-lifetime srs T Λ ℓ lv)
+;;   (path-valid-for-lifetime srs T Λ ℓ lv)
 ;;
 ;;   ;; Data cannot have a lifetime shorter than the loan ℓ.
 ;;   ;;
