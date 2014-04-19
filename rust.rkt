@@ -114,6 +114,8 @@
   [vmap ((x α) ...)]
   ;; T : a map from names to types
   [T (vdecls ...)]
+  ;; θ : a substitution (from to)
+  [θ [(ℓ ℓ) ...]]
   ;; S (stack) : stack-frames contain pending statements
   [S (sf ...)]
   [sf (ℓ sts)]
@@ -718,13 +720,70 @@
 (test-equal (term (is-void void)) #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-ℓ
+
+(define-metafunction Patina-machine
+  subst-ℓ : θ ℓ -> ℓ
+
+  [(subst-ℓ θ static) static]
+  [(subst-ℓ θ ℓ) (get ℓ θ)]
+  )
+
+(test-equal (term (subst-ℓ [] static)) (term static))
+(test-equal (term (subst-ℓ [(a b)] a)) (term b))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-ty
+
+(define-metafunction Patina-machine
+  subst-ty : θ ty -> ty
+
+  [(subst-ty θ (struct s [ℓ ...]))
+   (struct s [(subst-ℓ θ ℓ) ...])]
+
+  [(subst-ty θ (~ ty))
+   (~ (subst-ty θ ty))]
+
+  [(subst-ty θ (& ℓ mq ty))
+   (& (subst-ℓ θ ℓ) mq (subst-ty θ ty))]
+
+  [(subst-ty θ int)
+   int]
+
+  [(subst-ty θ (Option ty))
+   (Option (subst-ty θ ty))]
+  
+  [(subst-ty θ (vec ty olen))
+   (vec (subst-ty θ ty) olen)]
+  )
+
+(test-equal (term (subst-ty [(a b) (b c)] (struct s [a b])))
+            (term (struct s [b c])))
+
+(test-equal (term (subst-ty [(a b) (b c)] (~ (struct s [a b]))))
+            (term (~ (struct s [b c]))))
+
+(test-equal (term (subst-ty [(a b) (b c)] (& a mut (struct s [a b]))))
+            (term (& b mut (struct s [b c]))))
+
+(test-equal (term (subst-ty [(a b) (b c)] int))
+            (term int))
+
+(test-equal (term (subst-ty [(a b) (b c)] (Option (& a mut int))))
+            (term (Option (& b mut int))))
+
+(test-equal (term (subst-ty [(a b) (b c)] (vec (& a mut int) erased)))
+            (term (vec (& b mut int) erased)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; field-tys
 
 (define-metafunction Patina-machine
   field-tys : srs s ℓs -> (ty ...)
   
-  [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 ℓs_1)
-   (ty_0 ...)] ;; FIXME subst lifetimes
+  [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_0 [ℓ_1 ...])
+   ((subst-ty θ ty_0) ...)
+   (where θ [(ℓ_0 ℓ_1) ...])]
 
   [(field-tys ((struct s_0 (ℓ_0 ...) (ty_0 ...)) sr ...) s_1 ℓs_1)
    (field-tys (sr ...) s_1 ℓs_1)])
@@ -765,13 +824,13 @@
 (test-equal (term (is-DST ,test-dst-srs (struct RCDataInt3 [])))
             #false)
 
-(test-equal (term (is-DST ,test-dst-srs (struct RCInt3 [])))
+(test-equal (term (is-DST ,test-dst-srs (struct RCInt3 [a])))
             #false)
 
 (test-equal (term (is-DST ,test-dst-srs (struct RCDataIntN [])))
             #true)
 
-(test-equal (term (is-DST ,test-dst-srs (struct RCIntN [])))
+(test-equal (term (is-DST ,test-dst-srs (struct RCIntN [a])))
             #false)
 
 (test-equal (term (is-DST ,test-dst-srs (struct Cycle1 [])))
@@ -1002,7 +1061,7 @@
 
   )
 
-(test-equal (term (field-names ,test-srs C ()))
+(test-equal (term (field-names ,test-srs C (static)))
             (term [0 1]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1116,8 +1175,7 @@
 
 (test-equal (term (lvtype ,test-srs ,test-T (* p))) (term int))
 
-;; FIXME --> l0 should be static
-(test-equal (term (lvtype ,test-srs ,test-T (c · 1))) (term (struct B (l0))))
+(test-equal (term (lvtype ,test-srs ,test-T (c · 1))) (term (struct B (static))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lvaddr -- lookup addr of variable in V
@@ -1301,7 +1359,7 @@
    ;; sizes of each field's type:
    (where zs_0 ,(map (λ (t) (term (sizeof srs ,t))) (term tys)))
    ;; offset of each field:
-   (where zs_1 (field-offsets srs s lvs))
+   (where zs_1 (field-offsets srs s ℓs))
    ;; source address of value for each field:
    (where αs ,(map (λ (lv) (term (lvaddr srs H V T ,lv))) (term lvs)))
    ;; target address for each field relative to base address α;
@@ -1479,6 +1537,7 @@
                             ,test-T
                             i))
             (term ((int 49))))
+
 
 ;; test that `None` writes a 0 into the discriminant, leaves rest unchanged
 (test-equal (term (lvselect ,test-srs
@@ -2027,6 +2086,12 @@
   ;; is their relation to one another
   (Λ λs)
 
+  ;; variable lifetimes: map of maps from variable name to lifetime of
+  ;; block where it was defined
+  (vl (x ℓ))
+  (vls [vl ...])
+  (VL [vls ...])
+
   ;; in-scope loans
   (loan (ℓ mq lv))
   (£ [loan ...])
@@ -2050,8 +2115,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-≤
-;;
-;; FIXME
 
 (define-judgment-form
   Patina-typing
@@ -2061,7 +2124,35 @@
   [--------------------------------------------------
    (lifetime-≤ Λ ℓ ℓ)]
 
+  [--------------------------------------------------
+   (lifetime-≤ Λ ℓ static)]
+
+  [(where ℓs (get ℓ_a Λ))
+   (side-condition (∈ ℓ_b ℓs))
+   --------------------------------------------------
+   (lifetime-≤ Λ ℓ_a ℓ_b)]
+
   )
+
+(test-equal
+ (judgment-holds (lifetime-≤ [(a [b c]) (b []) (c [])] a a))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-≤ [(a [b c]) (b []) (c [])] a b))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-≤ [(a [b c]) (b []) (c [])] a c))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-≤ [(a [b c]) (b []) (c [])] b b))
+ #t)
+
+(test-equal
+ (judgment-holds (lifetime-≤ [(a [b c]) (b []) (c [])] b c))
+ #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ty-is-pod
@@ -2495,42 +2586,76 @@
  (term (paths-restricted-by-loan-of ,test-srs ,test-T (* q)))
  (term [(* q)]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; path-unique-for srs T Λ ℓ lv
-;;;;
-;;;; Holds if the path `lv` is a *unique path* during the lifetime ℓ.
-;;;; This means that, during the lifetime ℓ, `lv` is the only
-;;;; *accessible* path that would evaluate to that particular address.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-unique-for srs T Λ ℓ lv
 ;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (path-unique-for I   I I I I )
-;;  #:contract (path-unique-for srs T Λ ℓ lv)
-;;
-;;  [--------------------------------------------------
-;;   (path-unique-for srs T Λ ℓ x)]
-;;
-;;  [(path-unique-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-unique-for srs T Λ ℓ (lv · f))]
-;;
-;;  [(path-unique-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-unique-for srs T Λ ℓ (lv @ lv_1))]
-;;
-;;  [(where (~ ty) (lvtype srs T lv))
-;;   (path-unique-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-unique-for srs T Λ ℓ (* lv))]
-;;
-;;  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
-;;   (lifetime-≤ Λ ℓ ℓ_lv)
-;;   (path-unique-for srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (path-unique-for srs T Λ ℓ (* lv))]
-;;
-;;  )
-;;
+;; Holds if the path `lv` is a *unique path* during the lifetime ℓ.
+;; This means that, during the lifetime ℓ, `lv` is the only
+;; *accessible* path that would evaluate to that particular address.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (reject-x I)
+  #:contract (reject-x any)
+
+  [--------------------------------------------------
+   (reject-x debug-me)]
+
+  )
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (path-unique-for I   I I I I )
+  #:contract (path-unique-for srs T Λ ℓ lv)
+
+  [--------------------------------------------------
+   (path-unique-for srs T Λ ℓ x)]
+
+  [(path-unique-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-unique-for srs T Λ ℓ (lv · f))]
+
+  [(path-unique-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-unique-for srs T Λ ℓ (lv @ lv_1))]
+
+  [(where (~ ty) (lvtype srs T lv))
+   (path-unique-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-unique-for srs T Λ ℓ (* lv))]
+
+  [(where (& ℓ_lv mut ty) (lvtype srs T lv))
+   (lifetime-≤ Λ ℓ ℓ_lv)
+   (path-unique-for srs T Λ ℓ lv)
+   --------------------------------------------------
+   (path-unique-for srs T Λ ℓ (* lv))]
+
+  )
+
+(define test-put-T (term [[(pimm (& b imm (struct B (static))))
+                           (pmut (& b mut (struct B (static))))]]))
+(define test-put-Λ (term [(a []) (b [a]) (c [a])]))
+
+(test-equal
+ (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
+                                  b pimm))
+ #t)
+
+(test-equal
+ (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
+                                  b (* ((* pimm) · 1))))
+ #f)
+
+(test-equal
+ (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
+                                  b (* ((* pmut) · 1))))
+ #t)
+
+(test-equal
+ (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
+                                  a (* ((* pmut) · 1))))
+ #f)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; can-move-from
 ;;
