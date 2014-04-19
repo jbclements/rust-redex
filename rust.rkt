@@ -2202,56 +2202,6 @@
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lv-initialized ℑ lv
-;; lv-not-initialized ℑ lv
-;;
-;; Hold if the lvalue lv is or is not initialized, respectively.
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (lv-initialized I I )
-  #:contract (lv-initialized ℑ lv)
-
-  [(side-condition (∈ lv ℑ))
-   --------------------------------------------------
-   (lv-initialized ℑ lv)]
-  )
-
-(define-judgment-form
-  Patina-typing
-  #:mode     (lv-not-initialized I I )
-  #:contract (lv-not-initialized ℑ lv)
-
-  [(side-condition (∉ lv ℑ))
-   --------------------------------------------------
-   (lv-not-initialized ℑ lv)]
-  )
-
-(test-equal
- (judgment-holds (lv-initialized [a b] a))
- #t)
-
-(test-equal
- (judgment-holds (lv-initialized [a b] b))
- #t)
-
-(test-equal
- (judgment-holds (lv-initialized [a b] c))
- #f)
-
-(test-equal
- (judgment-holds (lv-not-initialized [a b] a))
- #f)
-
-(test-equal
- (judgment-holds (lv-not-initialized [a b] b))
- #f)
-
-(test-equal
- (judgment-holds (lv-not-initialized [a b] c))
- #t)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; in-scope-lifetimes
 ;;
 ;; Convert a Λ to a list ℓs of in-scope lifetimes
@@ -2374,6 +2324,73 @@
 (test-equal
  (term (mut-loans [(a imm x) (b mut y) (c imm z) (d mut a)]))
  (term [(b mut y) (d mut a)]))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lv-initialized srs T ℑ lv
+;; lv-not-initialized srs T ℑ lv
+;;
+;; Hold if the lvalue lv is or is not initialized, respectively.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lv-initialized I   I I I )
+  #:contract (lv-initialized srs T ℑ lv)
+
+  [(side-condition (∈ (owning-path srs T lv) ℑ))
+   --------------------------------------------------
+   (lv-initialized srs T ℑ lv)]
+  )
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lv-not-initialized I   I I I )
+  #:contract (lv-not-initialized srs T ℑ lv)
+
+  [(side-condition (∉ (owning-path srs T lv) ℑ))
+   --------------------------------------------------
+   (lv-not-initialized srs T ℑ lv)]
+  )
+
+;; if p is initialized, p is initialized
+
+(test-equal
+ (judgment-holds (lv-initialized ,test-srs ,test-T [p] p))
+ #t)
+(test-equal
+ (judgment-holds (lv-not-initialized ,test-srs ,test-T [p] p))
+ #f)
+
+;; if owned ptr is initialized, referent is not necessarily initialized
+(test-equal
+ (judgment-holds (lv-initialized ,test-srs ,test-T [p] (* p)))
+ #f)
+(test-equal
+ (judgment-holds (lv-not-initialized ,test-srs ,test-T [p] (* p)))
+ #t)
+
+;; both ptr and referent initialized
+(test-equal
+ (judgment-holds (lv-initialized ,test-srs ,test-T [p (* p)] (* p)))
+ #t)
+(test-equal
+ (judgment-holds (lv-not-initialized ,test-srs ,test-T [p (* p)] (* p)))
+ #f)
+
+;; borrowed ptr referent initialized if ptr is initialized
+(test-equal
+ (judgment-holds (lv-initialized ,test-srs ,test-T [q] (* q)))
+ #t)
+(test-equal
+ (judgment-holds (lv-not-initialized ,test-srs ,test-T [q] (* q)))
+ #f)
+
+(test-equal
+ (judgment-holds (lv-initialized ,test-srs ,test-T [] (* q)))
+ #f)
+(test-equal
+ (judgment-holds (lv-not-initialized ,test-srs ,test-T [] (* q)))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-in-scope Λ ℓ
@@ -2638,7 +2655,9 @@
   )
 
 (define test-put-T (term [[(pimm (& b imm (struct B (static))))
-                           (pmut (& b mut (struct B (static))))]]))
+                           (pmut (& b mut (struct B (static))))
+                           (owned-B (~ (struct B (static))))
+                           ]]))
 (define test-put-Λ (term [(a []) (b [a]) (c [a])]))
 
 (test-equal
@@ -2768,7 +2787,7 @@
   #:contract (can-access srs T Λ £ ℑ lv)
 
   [;; Data must be initialized:
-   (lv-initialized ℑ (owning-path srs T lv))
+   (lv-initialized srs T ℑ lv)
 
    ;; The path lv cannot be restricted by a loan:
    ;;
@@ -2835,10 +2854,21 @@
                              [(a mut pimm)] [pimm] pmut))
  #f)
 
+;; can't access uninitialized referent
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [] [owned-B] (* owned-B)))
+ #f)
+
 ;; otherwise ok
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
                              [(a mut pimm)] [pimm pmut] pmut))
+ #t)
+
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [] [(* owned-B) owned-B] (* owned-B)))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2937,31 +2967,54 @@
                                 [] [pimm] (* pimm)))
  #f)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-init
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-init I   I I I I )
-;;  #:contract (can-init srs T Λ ℑ lv)
-;;
-;;  [(lv-not-initialized ℑ x)
-;;   --------------------------------------------------
-;;   (can-init srs T Λ ℑ x)]
-;;
-;;  [(lv-initialized ℑ lv)
-;;   (lv-not-initialized ℑ (lv · f))
-;;   --------------------------------------------------
-;;   (can-init srs T Λ ℑ (lv · f))]
-;;
-;;  [(lv-initialized ℑ lv)
-;;   (lv-not-initialized ℑ (* lv))
-;;   (where (~ ty) (lvtype srs T lv))
-;;   --------------------------------------------------
-;;   (can-init srs T Λ ℑ (* lv))]
-;;
-;;  )
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-init
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-init I   I I I I )
+  #:contract (can-init srs T Λ ℑ lv)
+
+  [(lv-not-initialized srs T ℑ x)
+   --------------------------------------------------
+   (can-init srs T Λ ℑ x)]
+
+  [(lv-initialized srs T ℑ lv)
+   (lv-not-initialized srs T ℑ (lv · f))
+   --------------------------------------------------
+   (can-init srs T Λ ℑ (lv · f))]
+
+  [(lv-initialized srs T ℑ lv)
+   (lv-not-initialized srs T ℑ (* lv))
+   (where (~ ty) (lvtype srs T lv))
+   --------------------------------------------------
+   (can-init srs T Λ ℑ (* lv))]
+
+  )
+
+;; cannot initiatialize something already written
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [pmut] pmut))
+ #f)
+
+;; cannot initiatialize borrowed data
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [pmut] (* pmut)))
+ #f)
+
+;; but can initialize something not yet written
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [] pimm))
+ #t)
+
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [owned-B] (* owned-B)))
+ #t)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; path-outlives
 ;;
