@@ -2483,17 +2483,17 @@
 ;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
 ;; as appropriate for the type of `lv`
 
-(define-metafunction Patina-machine
+(define-metafunction Patina-typing
   owned-subpaths : srs T lv -> [lv ...]
   
   [(owned-subpaths srs T lv)
    [lv lv_1 ... lv_2 ...]
    (where [lv_1 ...] (owned-subpaths1 srs T lv))
-   (where [lv_2 ...] ,(flatten (term [(owned-subpaths1 srs T lv_1) ...])))
+   (where [lv_2 ...] ,(append* (term [(owned-subpaths1 srs T lv_1) ...])))
    ]
   )
 
-(define-metafunction Patina-machine
+(define-metafunction Patina-typing
   owned-subpaths1 : srs T lv -> [lv ...]
 
   [(owned-subpaths1 srs T lv)
@@ -2531,13 +2531,13 @@
 ;; copy) or else create a second path to the same memory that was
 ;; borrowed. Similar concerns hold for writing.
 
-(define-metafunction Patina-machine
+(define-metafunction Patina-typing
   paths-restricted-by-loans : srs T £ -> lvs
 
   [(paths-restricted-by-loans srs T [(ℓ mq lv) ...])
-   ,(flatten (term [(paths-restricted-by-loan-of srs T lv) ...]))])
+   ,(append* (term [(paths-restricted-by-loan-of srs T lv) ...]))])
 
-(define-metafunction Patina-machine
+(define-metafunction Patina-typing
   paths-restricted-by-loan-of : srs T lv -> lvs
 
   [(paths-restricted-by-loan-of srs T x)
@@ -2585,6 +2585,11 @@
 (test-equal
  (term (paths-restricted-by-loan-of ,test-srs ,test-T (* q)))
  (term [(* q)]))
+
+(test-equal
+ (term (paths-restricted-by-loans ,test-srs ,test-T [(a imm (* q))
+                                                     (a mut (* (b · 1)))]))
+ (term [(* q) (* (b · 1)) (b · 1) b]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; path-unique-for srs T Λ ℓ lv
@@ -2754,51 +2759,88 @@
                                      a (* ((* pmut) · 1))))
  #f)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; can-access
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (can-access I   I I I I I )
-;;  #:contract (can-access srs T Λ £ ℑ lv)
-;;
-;;  [;; Data must be initialized:
-;;   (lv-initialized ℑ (owning-path srs T lv))
-;;
-;;   ;; The path lv cannot be restricted by a loan:
-;;   ;;
-;;   ;; This covers cases like these:
-;;   ;;
-;;   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
-;;   ;;    a.b = ...;          // would overwrite c as part
-;;   ;;
-;;   ;;    let x = &a.b.c;     // restricts a, a.b, and a.b.c
-;;   ;;    a.b = ...;          // would overwrite c as part
-;;   ;;
-;;   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
-;;   ;;    let y = a.b;        // would read c as part
-;;   (where [lv_r ...] (paths-restricted-by-loans srs T £_l))
-;;   (side-condition (∉ lv [lv_r ...]))
-;;
-;;   ;; Neither the path lv nor any base path of lv can be borrowed:
-;;   ;;
-;;   ;; This covers cases like this:
-;;   ;;
-;;   ;;    let x = &mut a;
-;;   ;;    a.b = ...;          // would overwrite part of a
-;;   ;;
-;;   ;;    let x = &a;
-;;   ;;    a.b = ...;          // would overwrite part of a
-;;   ;;
-;;   ;;    let x = &mut a;
-;;   ;;    let y = a.b;        // would read part of a
-;;   (where [lv_b ...] (path-and-base-paths lv))
-;;   (unencumbered £_l lv_b) ...
-;;   --------------------------------------------------
-;;   (can-access srs T Λ £_l ℑ lv)]
-;;
-;;  )
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; can-access
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (can-access I   I I I I I )
+  #:contract (can-access srs T Λ £ ℑ lv)
+
+  [;; Data must be initialized:
+   (lv-initialized ℑ (owning-path srs T lv))
+
+   ;; The path lv cannot be restricted by a loan:
+   ;;
+   ;; This covers cases like these:
+   ;;
+   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
+   ;;    a.b = ...;          // would overwrite c as part
+   ;;
+   ;;    let x = &a.b.c;     // restricts a, a.b, and a.b.c
+   ;;    a.b = ...;          // would overwrite c as part
+   ;;
+   ;;    let x = &mut a.b.c; // restricts a, a.b, and a.b.c
+   ;;    let y = a.b;        // would read c as part
+   (where [lv_r ...] (paths-restricted-by-loans srs T £_l))
+   (side-condition (∉ lv [lv_r ...]))
+
+   ;; Neither the path lv nor any base path of lv can be borrowed:
+   ;;
+   ;; This covers cases like this:
+   ;;
+   ;;    let x = &mut a;
+   ;;    a.b = ...;          // would overwrite part of a
+   ;;
+   ;;    let x = &a;
+   ;;    a.b = ...;          // would overwrite part of a
+   ;;
+   ;;    let x = &mut a;
+   ;;    let y = a.b;        // would read part of a
+   (where [lv_b ...] (path-and-base-paths lv))
+   (unencumbered £_l lv_b) ...
+   --------------------------------------------------
+   (can-access srs T Λ £_l ℑ lv)]
+
+  )
+
+;; can't access loaned variable
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [(a mut pimm)] [pimm] pimm))
+ #f)
+
+;; can't access variable pmut when (* pmut) was loaned
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [(a mut (* pmut))] [pmut] pmut))
+ #f)
+
+;; can't access variable (* pmut) when pmut was loaned
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [(a mut pmut)] [pmut] (* pmut)))
+ #f)
+
+;; accessing (*pmut).1 when (*pmut).0 was loaned is ok
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [(a mut ((* pmut) · 0))] [pmut]
+                             ((* pmut) · 1)))
+ #t)
+
+;; can't access uninitialized variable
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [(a mut pimm)] [pimm] pmut))
+ #f)
+
+;; otherwise ok
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [(a mut pimm)] [pimm pmut] pmut))
+ #t)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; can-read-from
 ;;
