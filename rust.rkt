@@ -2868,10 +2868,10 @@
 (define-judgment-form
   Patina-typing
   #:mode     (can-access I   I I I I I )
-  #:contract (can-access srs T Λ £ ℑ lv)
+  #:contract (can-access srs T Λ £ Δ lv)
 
   [;; Data must be initialized:
-   (side-condition (lv-fully-initialized srs T ℑ lv))
+   (side-condition (lv-fully-initialized Δ lv))
 
    ;; The path lv cannot be restricted by a loan:
    ;;
@@ -2903,42 +2903,48 @@
    (where [lv_b ...] (path-and-base-paths lv))
    (unencumbered £_l lv_b) ...
    --------------------------------------------------
-   (can-access srs T Λ £_l ℑ lv)]
+   (can-access srs T Λ £_l Δ lv)]
 
   )
 
 ;; can't access loaned variable
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pimm)] [pimm] pimm))
+                             [(a mut pimm)] [] pimm))
  #f)
 
 ;; can't access variable pmut when (* pmut) was loaned
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut (* pmut))] [pmut] pmut))
+                             [(a mut (* pmut))] [] pmut))
  #f)
 
 ;; can't access variable (* pmut) when pmut was loaned
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pmut)] [pmut] (* pmut)))
+                             [(a mut pmut)] [] (* pmut)))
  #f)
 
 ;; accessing (*pmut).1 when (*pmut).0 was loaned is ok
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut ((* pmut) · 0))] [pmut]
+                             [(a mut ((* pmut) · 0))] []
                              ((* pmut) · 1)))
  #t)
 
 ;; can't access uninitialized variable
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pimm)] [pimm] pmut))
+                             [(a mut pimm)] [pmut] pmut))
  #f)
 
 ;; can't access uninitialized referent
+(test-equal
+ (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+                             [] [(* owned-B)] (* owned-B)))
+ #f)
+
+;; can't access referent of uninitialized pointer
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
                              [] [owned-B] (* owned-B)))
@@ -2947,12 +2953,12 @@
 ;; otherwise ok
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pimm)] [pimm pmut] pmut))
+                             [(a mut pimm)] [] pmut))
  #t)
 
 (test-equal
  (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [] [(* owned-B) owned-B] (* owned-B)))
+                             [] [] (* owned-B)))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2961,25 +2967,25 @@
 (define-judgment-form
   Patina-typing
   #:mode     (can-read-from I   I I I I I )
-  #:contract (can-read-from srs T Λ £ ℑ lv)
+  #:contract (can-read-from srs T Λ £ Δ lv)
 
   [;; Only mutable loans prevent reads:
-   (can-access srs T Λ (mut-loans £) ℑ lv)
+   (can-access srs T Λ (mut-loans £) Δ lv)
    --------------------------------------------------
-   (can-read-from srs T Λ £ ℑ lv)]
+   (can-read-from srs T Λ £ Δ lv)]
 
   )
 
 ;; imm loans do not prevent reads
 (test-equal
  (judgment-holds (can-read-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(a imm pimm)] [pimm] pimm))
+                                [(a imm pimm)] [] pimm))
  #t)
 
 ;; but mut loans do
 (test-equal
  (judgment-holds (can-read-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(a mut pimm)] [pimm] pimm))
+                                [(a mut pimm)] [] pimm))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2988,25 +2994,25 @@
 (define-judgment-form
   Patina-typing
   #:mode     (can-write-to I   I I I I I )
-  #:contract (can-write-to srs T Λ £ ℑ lv)
+  #:contract (can-write-to srs T Λ £ Δ lv)
 
   [;; All loans prevent writes:
-   (can-access srs T Λ £ ℑ lv)
+   (can-access srs T Λ £ Δ lv)
    --------------------------------------------------
-   (can-write-to srs T Λ £ ℑ lv)]
+   (can-write-to srs T Λ £ Δ lv)]
 
   )
 
 ;; imm loans do prevent writes
 (test-equal
  (judgment-holds (can-write-to ,test-srs ,test-put-T ,test-put-Λ
-                               [(a imm pimm)] [pimm] pimm))
+                               [(a imm pimm)] [] pimm))
  #f)
 
 ;; as do mut loans
 (test-equal
  (judgment-holds (can-write-to ,test-srs ,test-put-T ,test-put-Λ
-                               [(a mut pimm)] [pimm] pimm))
+                               [(a mut pimm)] [] pimm))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
