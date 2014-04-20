@@ -2127,9 +2127,6 @@
 
 (define-extended-language Patina-typing Patina-machine
   ;; de-initialization: lists lvalues that have been de-initialized
-  ;;
-  ;; We maintain the invariant that if a path lv is deinitialized,
-  ;; then there is no entry in the list for lv.x.
   (Δ (lv ...))
 
   ;; lifetime declaration: lifetime ℓ is in scope, and it is a sublifetime
@@ -3197,7 +3194,7 @@
 (test-equal
  (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
                            [owned-B ((* owned-B) · 1)] ((* owned-B) · 1)))
- #t)
+ #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; path-valid-for-lifetime
@@ -3374,21 +3371,41 @@
   
   )
 
-;; using a ~ pointer kills both that pointer and any owned subpaths
+;; using a ~ or &mut pointer kills that pointer (resp. referent)
 (test-equal
  (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
-                            [owned-B (* owned-B) ((* owned-B) · 0)]
+                            []
                             owned-B ty Δ)
                  (ty / Δ))
- (term [((~ (struct B (static))) / [])]))
+ (term [((~ (struct B (static))) / [owned-B])]))
+(test-equal
+ (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+                            []
+                            (* owned-B) ty Δ)
+                 (ty / Δ))
+ (term [((struct B (static)) / [(* owned-B)])]))
+(test-equal
+ (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+                            []
+                            ((* owned-B) · 1) ty Δ)
+                 (ty / Δ))
+ (term [((& static mut int) / [((* owned-B) · 1)])]))
+
+;; naturally it must be initialized
+(test-equal
+ (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+                            [owned-B]
+                            owned-B ty Δ)
+                 (ty / Δ))
+ (term []))
 
 ;; using an int doesn't kill anything
 (test-equal
  (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
-                            [owned-B (* owned-B) ((* owned-B) · 0)]
+                            []
                             ((* owned-B) · 0) ty Δ)
                  (ty / Δ))
- (term [(int / [owned-B (* owned-B) ((* owned-B) · 0)])]))
+ (term [(int / [])]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; use-lvs-ok -- uses a sequence of lvalues in order
@@ -3411,7 +3428,7 @@
 ;; using a ~ pointer kills both that pointer and any owned subpaths
 (test-equal
  (judgment-holds (use-lvs-ok ,test-srs ,test-put-T ,test-put-Λ []
-                             [owned-B (* owned-B) ((* owned-B) · 0)]
+                             []
                              [owned-B (* owned-B)] ty Δ)
                  (ty / Δ))
  (term []))
