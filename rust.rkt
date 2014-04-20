@@ -2415,6 +2415,39 @@
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lv-partially-initialized
+;;
+;; Holds if the lvalue lv is initialized, though some subpaths may not be
+
+(define-metafunction Patina-typing
+  lv-partially-initialized : Δ lv -> boolean
+
+  [(lv-partially-initialized Δ lv)
+   (∄ [(∈ lv_b Δ) ...])
+   (where [lv_b ...] (path-and-base-paths lv))]
+  )
+
+(test-equal
+ (term (lv-partially-initialized [] p))
+ #t)
+
+(test-equal
+ (term (lv-partially-initialized [] (* p)))
+ #t)
+
+(test-equal
+ (term (lv-partially-initialized [p] p))
+ #f)
+
+(test-equal
+ (term (lv-partially-initialized [(* p)] p))
+ #t)
+
+(test-equal
+ (term (lv-partially-initialized [p] (* p)))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lv-fully-initialized Δ lv
 ;;
 ;; Hold if the lvalue lv is fully initialized.
@@ -3107,46 +3140,63 @@
 (define-judgment-form
   Patina-typing
   #:mode     (can-init I   I I I I )
-  #:contract (can-init srs T Λ ℑ lv)
+  #:contract (can-init srs T Λ Δ lv)
 
-  [(side-condition (lv-not-initialized srs T ℑ x))
+  [(side-condition (∈ x Δ))
    --------------------------------------------------
-   (can-init srs T Λ ℑ x)]
+   (can-init srs T Λ Δ x)]
 
-  [(side-condition (lv-initialized srs T ℑ lv))
-   (side-condition (¬ (lv-initialized srs T ℑ (lv · f))))
+  [(side-condition (lv-partially-initialized Δ lv))
+   (side-condition (∈ (lv · f) Δ))
    --------------------------------------------------
-   (can-init srs T Λ ℑ (lv · f))]
+   (can-init srs T Λ Δ (lv · f))]
 
-  [(side-condition (lv-initialized srs T ℑ lv))
-   (side-condition (¬ (lv-not-initialized srs T ℑ (* lv))))
+  [(side-condition (lv-partially-initialized Δ lv))
+   (side-condition (∈ (* lv) Δ))
    (where (~ ty) (lvtype srs T lv))
    --------------------------------------------------
-   (can-init srs T Λ ℑ (* lv))]
+   (can-init srs T Λ Δ (* lv))]
 
   )
 
 ;; cannot initiatialize something already written
 (test-equal
  (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [pmut] pmut))
+                           [] pmut))
  #f)
 
 ;; cannot initiatialize borrowed data
 (test-equal
  (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [pmut] (* pmut)))
+                           [] (* pmut)))
  #f)
 
-;; but can initialize something not yet written
+;; but can initialize something that is deinitialized
 (test-equal
  (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [] pimm))
+                           [pimm] pimm))
  #t)
 
 (test-equal
  (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [owned-B] (* owned-B)))
+                           [(* owned-B)] (* owned-B)))
+ #t)
+
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [((* owned-B) · 1)] ((* owned-B) · 1)))
+ #t)
+
+;; as long as the base path is initialized
+
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [owned-B (* owned-B)] (* owned-B)))
+ #f)
+
+(test-equal
+ (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+                           [owned-B ((* owned-B) · 1)] ((* owned-B) · 1)))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
