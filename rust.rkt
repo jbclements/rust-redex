@@ -3286,6 +3286,14 @@
 
   )
 
+;; using a ~ pointer kills both that pointer and any owned subpaths
+(test-equal
+ (judgment-holds (use-lvs-ok ,test-srs ,test-put-T ,test-put-Λ []
+                             [owned-B (* owned-B) ((* owned-B) · 0)]
+                             [owned-B (* owned-B)] ty ℑ)
+                 (ty / ℑ))
+ (term []))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; rv-ok
 ;;
