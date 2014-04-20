@@ -384,13 +384,27 @@
 (test-equal (term (∉ 4 [1 2 3])) (term #t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; ¬ -- not in term form
+;; common logic functions in term form
 
 (define-metafunction Patina-machine
   ¬ : boolean -> boolean
 
   [(¬ #t) #f]
   [(¬ #f) #t]
+  )
+
+(define-metafunction Patina-machine
+  ∨ : boolean boolean -> boolean
+
+  [(∨ #f #f) #f]
+  [(∨ boolean boolean) #t]
+  )
+
+(define-metafunction Patina-machine
+  ∧ : boolean boolean -> boolean
+
+  [(∧ #t #t) #t]
+  [(∧ boolean boolean) #f]
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -428,7 +442,7 @@
 (define-metafunction Patina-machine
   ∄ : [any ...] -> boolean
 
-  [(∄ any) (not (∃ any))]
+  [(∄ any) (¬ (∃ any))]
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -445,6 +459,19 @@
 (test-equal (term (≠ x y)) (term #t))
 (test-equal (term (≠ (~ int) (~ int))) (term #f))
 (test-equal (term (≠ (~ int) (~ (~ int)))) (term #t))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ∩? -- a metafunction for testing whether two sets have members in common
+
+(define-metafunction Patina-machine
+  ∩? : [any ...] [any ...] -> boolean
+
+  [(∩? [any_0 ...] [any_1 ...])
+   (∃ [(∈ any_0 [any_1 ...]) ...])]
+  )
+
+(test-equal (term (∩? [1 2 4] [1 2 3])) #t)
+(test-equal (term (∩? [1 2 3] [4 5 6])) #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ∪ -- a metafunction for set union
@@ -2099,8 +2126,11 @@
 ;;;;
 
 (define-extended-language Patina-typing Patina-machine
-  ;; initialization: lists lvalues that have been initialized
-  (ℑ (lv ...))
+  ;; de-initialization: lists lvalues that have been de-initialized
+  ;;
+  ;; We maintain the invariant that if a path lv is deinitialized,
+  ;; then there is no entry in the list for lv.x.
+  (Δ (lv ...))
 
   ;; lifetime declaration: lifetime ℓ is in scope, and it is a sublifetime
   ;; of ℓs
@@ -2358,72 +2388,63 @@
  (term (mut-loans [(a imm x) (b mut y) (c imm z) (d mut a)]))
  (term [(b mut y) (d mut a)]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; paths-intersect lv lv
+;;
+;; We say that two paths intersect if one is a subpath of the other.
+;; So, for example, x.y and x intersect, but x.y and x.z do not.
+
+(define-metafunction Patina-typing
+  paths-intersect : lv lv -> boolean
+
+  [(paths-intersect lv_1 lv_2)
+   (∨ (∈ lv_1 (path-and-base-paths lv_2))
+      (∈ lv_2 (path-and-base-paths lv_1)))]
+  )
+
+(test-equal
+ (term (paths-intersect (x · 0) (x · 1)))
+ #f)
+
+(test-equal
+ (term (paths-intersect (x · 0) x))
+ #t)
+
+(test-equal
+ (term (paths-intersect x (x · 0)))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lv-initialized srs T ℑ lv
-;; lv-not-initialized srs T ℑ lv
+;; lv-fully-initialized Δ lv
 ;;
-;; Hold if the lvalue lv is or is not initialized, respectively.
+;; Hold if the lvalue lv is fully initialized.
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (lv-initialized I   I I I )
-  #:contract (lv-initialized srs T ℑ lv)
+(define-metafunction Patina-typing
+  lv-fully-initialized : Δ lv -> boolean
 
-  [(side-condition (∈ (owning-path srs T lv) ℑ))
-   --------------------------------------------------
-   (lv-initialized srs T ℑ lv)]
+  [(lv-fully-initialized [lv_Δ ...] lv)
+   (∄ [(paths-intersect lv lv_Δ) ...])]
   )
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (lv-not-initialized I   I I I )
-  #:contract (lv-not-initialized srs T ℑ lv)
-
-  [(side-condition (∉ (owning-path srs T lv) ℑ))
-   --------------------------------------------------
-   (lv-not-initialized srs T ℑ lv)]
-  )
-
-;; if p is initialized, p is initialized
-
 (test-equal
- (judgment-holds (lv-initialized ,test-srs ,test-T [p] p))
- #t)
-(test-equal
- (judgment-holds (lv-not-initialized ,test-srs ,test-T [p] p))
- #f)
-
-;; if owned ptr is initialized, referent is not necessarily initialized
-(test-equal
- (judgment-holds (lv-initialized ,test-srs ,test-T [p] (* p)))
- #f)
-(test-equal
- (judgment-holds (lv-not-initialized ,test-srs ,test-T [p] (* p)))
+ (term (lv-fully-initialized [] p))
  #t)
 
-;; both ptr and referent initialized
 (test-equal
- (judgment-holds (lv-initialized ,test-srs ,test-T [p (* p)] (* p)))
+ (term (lv-fully-initialized [] (* p)))
  #t)
-(test-equal
- (judgment-holds (lv-not-initialized ,test-srs ,test-T [p (* p)] (* p)))
- #f)
 
-;; borrowed ptr referent initialized if ptr is initialized
 (test-equal
- (judgment-holds (lv-initialized ,test-srs ,test-T [q] (* q)))
- #t)
-(test-equal
- (judgment-holds (lv-not-initialized ,test-srs ,test-T [q] (* q)))
+ (term (lv-fully-initialized [p] p))
  #f)
 
 (test-equal
- (judgment-holds (lv-initialized ,test-srs ,test-T [] (* q)))
+ (term (lv-fully-initialized [(* p)] p))
  #f)
+
 (test-equal
- (judgment-holds (lv-not-initialized ,test-srs ,test-T [] (* q)))
- #t)
+ (term (lv-fully-initialized [p] (* p)))
+ #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-in-scope Λ ℓ
@@ -2850,7 +2871,7 @@
   #:contract (can-access srs T Λ £ ℑ lv)
 
   [;; Data must be initialized:
-   (lv-initialized srs T ℑ lv)
+   (side-condition (lv-fully-initialized srs T ℑ lv))
 
    ;; The path lv cannot be restricted by a loan:
    ;;
@@ -3038,17 +3059,17 @@
   #:mode     (can-init I   I I I I )
   #:contract (can-init srs T Λ ℑ lv)
 
-  [(lv-not-initialized srs T ℑ x)
+  [(side-condition (lv-not-initialized srs T ℑ x))
    --------------------------------------------------
    (can-init srs T Λ ℑ x)]
 
-  [(lv-initialized srs T ℑ lv)
-   (lv-not-initialized srs T ℑ (lv · f))
+  [(side-condition (lv-initialized srs T ℑ lv))
+   (side-condition (¬ (lv-initialized srs T ℑ (lv · f))))
    --------------------------------------------------
    (can-init srs T Λ ℑ (lv · f))]
 
-  [(lv-initialized srs T ℑ lv)
-   (lv-not-initialized srs T ℑ (* lv))
+  [(side-condition (lv-initialized srs T ℑ lv))
+   (side-condition (¬ (lv-not-initialized srs T ℑ (* lv))))
    (where (~ ty) (lvtype srs T lv))
    --------------------------------------------------
    (can-init srs T Λ ℑ (* lv))]
@@ -3235,37 +3256,38 @@
 (define-judgment-form
   Patina-typing
   #:mode     (use-lv-ok I   I I I I I  O  O)
-  #:contract (use-lv-ok srs T Λ £ ℑ lv ty ℑ)
+  #:contract (use-lv-ok srs T Λ £ Δ lv ty Δ)
 
   ;; If `lv` is POD, it is not moved but rather copied.
   [(where ty (lvtype srs T lv))
-   (can-read-from srs T Λ £ ℑ lv)
+   (can-read-from srs T Λ £ Δ lv)
    (side-condition (ty-is-pod srs ty))
    --------------------------------------------------
-   (use-lv-ok srs T Λ £ ℑ lv ty ℑ)]
+   (use-lv-ok srs T Λ £ Δ lv ty Δ)]
 
   ;; Otherwise, each use deinitializes the value:
   [(where ty (lvtype srs T lv))
-   (can-move-from srs T Λ £ ℑ lv)
+   (can-move-from srs T Λ £ Δ lv)
    (side-condition (¬ (ty-is-pod srs ty)))
    --------------------------------------------------
-   (use-lv-ok srs T Λ £ ℑ lv ty (\\ ℑ (owned-subpaths srs T lv)))]
+   (use-lv-ok srs T Λ £ Δ lv ty (∪ Δ [lv]))]
+  
   )
 
 ;; using a ~ pointer kills both that pointer and any owned subpaths
 (test-equal
  (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
                             [owned-B (* owned-B) ((* owned-B) · 0)]
-                            owned-B ty ℑ)
-                 (ty / ℑ))
+                            owned-B ty Δ)
+                 (ty / Δ))
  (term [((~ (struct B (static))) / [])]))
 
 ;; using an int doesn't kill anything
 (test-equal
  (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
                             [owned-B (* owned-B) ((* owned-B) · 0)]
-                            ((* owned-B) · 0) ty ℑ)
-                 (ty / ℑ))
+                            ((* owned-B) · 0) ty Δ)
+                 (ty / Δ))
  (term [(int / [owned-B (* owned-B) ((* owned-B) · 0)])]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -3274,15 +3296,15 @@
 (define-judgment-form
   Patina-typing
   #:mode     (use-lvs-ok I   I I I I I   O   O)
-  #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
+  #:contract (use-lvs-ok srs T Λ £ Δ lvs tys Δ)
 
   [--------------------------------------------------
-   (use-lvs-ok srs T Λ £ ℑ [] [] ℑ)]
+   (use-lvs-ok srs T Λ £ Δ [] [] Δ)]
 
-  [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
-   (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
+  [(use-lv-ok srs T Λ £ Δ lv_0 ty_0 Δ_0)
+   (use-lvs-ok srs T Λ £ Δ_0 [lv_1 ...] [ty_1 ...] Δ_1)
    --------------------------------------------------
-   (use-lvs-ok srs T Λ £ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
+   (use-lvs-ok srs T Λ £ Δ [lv_0 lv_1 ...] [ty_0 ty_1 ...] Δ_1)]
 
   )
 
@@ -3290,8 +3312,8 @@
 (test-equal
  (judgment-holds (use-lvs-ok ,test-srs ,test-put-T ,test-put-Λ []
                              [owned-B (* owned-B) ((* owned-B) · 0)]
-                             [owned-B (* owned-B)] ty ℑ)
-                 (ty / ℑ))
+                             [owned-B (* owned-B)] ty Δ)
+                 (ty / Δ))
  (term []))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
