@@ -3021,40 +3021,84 @@
 (define-judgment-form
   Patina-typing
   #:mode     (can-move-from I   I I I I I )
-  #:contract (can-move-from srs T Λ £ ℑ lv)
+  #:contract (can-move-from srs T Λ £ Δ lv)
 
   [;; Can only move from things we own:
    (owned-path srs T lv)
 
    ;; Otherwise same as write:
-   (can-write-to srs T Λ £ ℑ lv) 
+   (can-write-to srs T Λ £ Δ lv) 
    --------------------------------------------------
-   (can-move-from srs T Λ £ ℑ lv)]
+   (can-move-from srs T Λ £ Δ lv)]
 
   )
 
 ;; imm loans prevent moves
 (test-equal
  (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(a imm pimm)] [pimm] pimm))
+                                [(b imm pimm)] [] pimm))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(b imm owned-B)] [] (* owned-B)))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(b imm (* owned-B))] [] (* owned-B)))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(b imm ((* owned-B) · 0))] [] (* owned-B)))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(b imm owned-B)] [] (* owned-B)))
  #f)
 
 ;; as do mut loans
 (test-equal
  (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(a mut pimm)] [pimm] pimm))
+                                [(b mut pimm)] [] pimm))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [(b mut owned-B)] [] (* owned-B)))
  #f)
 
 ;; otherwise ok
 (test-equal
  (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [] [pimm] pimm))
+                                [] [] pimm))
+ #t)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [] owned-B))
  #t)
 
 ;; but can't move from deref of borrowed pointer
 (test-equal
  (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [] [pimm] (* pimm)))
+                                [] [] (* pimm)))
+ #f)
+
+;; can move from deref of owned pointer
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [] (* owned-B)))
+ #t)
+
+;; unless uninitialized
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [owned-B] (* owned-B)))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [(* owned-B)] (* owned-B)))
+ #f)
+(test-equal
+ (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+                                [] [((* owned-B) · 1)] (* owned-B)))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
