@@ -2677,7 +2677,18 @@
 
   )
 
-(define test-put-Λ (term [(a []) (b [a]) (c [a])]))
+
+;; Our test fn is roughly:
+;;
+;; fn foo<'p0, 'p1>() 'a: {
+;;    'b: {
+;;      let pimm: &'b B<'static>;
+;;      let pmut: &'b B<'static>;
+;;      let owned-B: ~B<'static>;
+;;    }
+;; }
+
+(define test-put-Λ (term [(p0 []) (p1 []) (a [p0 p1]) (b [a p0 p1])]))
 (define test-put-T (term [[;; block a
                            ]
                           [;; block b
@@ -3061,7 +3072,7 @@
   #:mode     (path-valid-for-lifetime I   I I I  I I )
   #:contract (path-valid-for-lifetime srs T Λ VL ℓ lv)
 
-  [(where ℓ_x (get* x VL))
+  [(where ℓ_x ,(get* (term x) (term VL)))
    (lifetime-≤ Λ ℓ ℓ_x)
    --------------------------------------------------
    (path-valid-for-lifetime srs T Λ VL ℓ x)]
@@ -3122,39 +3133,85 @@
                   b (* pmut)))
  #t)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; path-outlives
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (path-outlives I   I I I I )
-;;  #:contract (path-outlives srs T Λ ℓ lv)
-;;
-;;  [;; At present, we require that the borrow be for some lifetime that
-;;   ;; is in scope. I'd like to lift this requirement in the future,
-;;   ;; though I can't recall just what gets more complicated as a
-;;   ;; result!
-;;   (lifetime-in-scope Λ ℓ)
-;;
-;;   ;; Determine from the path whether we be sure that the path outlives ℓ.
-;;   (path-valid-for-lifetime srs T Λ ℓ lv)
-;;
-;;   ;; Data cannot have a lifetime shorter than the loan ℓ.
-;;   ;;
-;;   ;; FIXME I feel like this check is unnecessary and implied by other
-;;   ;; requirements. In other words, the memory has an ultimate local
-;;   ;; variable in a block with lifetime ℓ, and presumably we wouldn't
-;;   ;; allow that owner to gain access to data with some lifetime less
-;;   ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
-;;   ;; to allow data to be borrowed for a lifetime not currently in
-;;   ;; scope, actually.)
-;;   (where ty (lvtype srs T lv))
-;;   (ty-bound-by-lifetime Λ ℓ ty)
-;;   --------------------------------------------------
-;;   (path-outlives srs T Λ ℓ lv)]
-;;
-;;  )
-;;
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  b owned-B))
+ #t)
+
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  b (* owned-B)))
+ #t)
+
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  b ((* owned-B) · 0)))
+ #t)
+
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  p0 (* owned-B)))
+ #f)
+
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  p0 (* owned-B)))
+ #f)
+
+(test-equal
+ (judgment-holds (path-valid-for-lifetime
+                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  p0 ((* owned-B) · 0)))
+ #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-outlives
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (path-outlives I   I I I  I I )
+  #:contract (path-outlives srs T Λ VL ℓ lv)
+
+  [;; At present, we require that the borrow be for some lifetime that
+   ;; is in scope. I'd like to lift this requirement in the future,
+   ;; though I can't recall just what gets more complicated as a
+   ;; result!
+   (lifetime-in-scope Λ ℓ)
+
+   ;; Determine from the path whether we be sure that the path outlives ℓ.
+   (path-valid-for-lifetime srs T Λ VL ℓ lv)
+
+   ;; Data cannot have a lifetime shorter than the loan ℓ.
+   ;;
+   ;; FIXME I feel like this check is unnecessary and implied by other
+   ;; requirements. In other words, the memory has an ultimate local
+   ;; variable in a block with lifetime ℓ, and presumably we wouldn't
+   ;; allow that owner to gain access to data with some lifetime less
+   ;; than ℓ. (Ah, perhaps this is what becomes complicated if we want
+   ;; to allow data to be borrowed for a lifetime not currently in
+   ;; scope, actually.)
+   (where ty (lvtype srs T lv))
+   (ty-bound-by-lifetime Λ ℓ ty)
+   --------------------------------------------------
+   (path-outlives srs T Λ VL ℓ lv)]
+
+  )
+
+(test-equal
+ (judgment-holds (path-outlives ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                                b (* owned-B)))
+ #t)
+
+(test-equal
+ (judgment-holds (path-outlives ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                                a (* owned-B)))
+ #f)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; use-lv-ok and use-lvs-ok
 ;;
