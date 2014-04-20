@@ -384,6 +384,16 @@
 (test-equal (term (∉ 4 [1 2 3])) (term #t))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ¬ -- not in term form
+
+(define-metafunction Patina-machine
+  ¬ : boolean -> boolean
+
+  [(¬ #t) #f]
+  [(¬ #f) #t]
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; size
 
 (define-metafunction Patina-machine
@@ -2173,48 +2183,55 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ty-is-pod
 
-(define-judgment-form
-  Patina-typing
-  #:mode (ty-is-pod I I)
-  #:contract (ty-is-pod srs ty)
+(define-metafunction Patina-typing
+  ty-is-pod : srs ty -> boolean
 
-  [--------------------------------------------------
-   (ty-is-pod srs int)]
+  [(ty-is-pod srs int) #t]
 
-  [--------------------------------------------------
-   (ty-is-pod srs (& ℓ imm ty))]
+  [(ty-is-pod srs (& ℓ imm ty)) #t]
 
-  [--------------------------------------------------
-   (ty-is-pod srs (Option ty))]
+  [(ty-is-pod srs (& ℓ mut ty)) #f]
 
-  [--------------------------------------------------
-   (ty-is-pod srs (Option ty))]
+  [(ty-is-pod srs (~ ty)) #f]
 
-  [(where [ty_s ...] (field-tys srs s ℓs))
-   (ty-is-pod srs ty_s) ...
-   --------------------------------------------------
-   (ty-is-pod srs (struct s ℓs))]
+  [(ty-is-pod srs (Option ty)) (ty-is-pod srs ty)]
+
+  [(ty-is-pod srs (struct s ℓs))
+   (∀ [(ty-is-pod srs ty_s) ...])
+   (where [ty_s ...] (field-tys srs s ℓs))]
    
   )
 
 (test-equal
- (judgment-holds
-  (ty-is-pod [] int))
+ (term (ty-is-pod [] int))
  #t)
 
 (test-equal
- (judgment-holds
-  (ty-is-pod [] (~ int)))
+ (term (ty-is-pod [] (Option int)))
+ #t)
+
+(test-equal
+ (term (ty-is-pod [] (~ int)))
  #f)
 
 (test-equal
- (judgment-holds
-  (ty-is-pod ,test-srs (struct A [])))
+ (term (ty-is-pod [] (Option (~ int))))
+ #f)
+
+(test-equal
+ (term (ty-is-pod [] (& b imm int)))
  #t)
 
 (test-equal
- (judgment-holds
-  (ty-is-pod ,test-srs (struct E [])))
+ (term (ty-is-pod [] (& b mut int)))
+ #f)
+
+(test-equal
+ (term (ty-is-pod ,test-srs (struct A [])))
+ #t)
+
+(test-equal
+ (term (ty-is-pod ,test-srs (struct E [])))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -3212,44 +3229,63 @@
                                 a (* owned-B)))
  #f)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; use-lv-ok and use-lvs-ok
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (use-lv-ok I   I I I I I  O  O)
-;;  #:contract (use-lv-ok srs T Λ £ ℑ lv ty ℑ)
-;;
-;;  ;; If `lv` is POD, it is not moved but rather copied.
-;;  [(where ty (lvtype srs T lv))
-;;   (can-read-from srs T Λ £ ℑ lv)
-;;   (side-condition (ty-is-pod srs ty))
-;;   --------------------------------------------------
-;;   (use-lv-ok srs T Λ £ ℑ lv ty ℑ)]
-;;
-;;  ;; Otherwise, each use deinitializes the value:
-;;  [(where ty (lvtype srs T lv))
-;;   (can-move-from srs T Λ £ ℑ lv)
-;;   (side-condition (not (ty-is-pod srs ty)))
-;;   --------------------------------------------------
-;;   (use-lv-ok srs T Λ £ ℑ lv ty (\\ ℑ (owned-subpaths lv)))]
-;;  )
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (use-lvs-ok I   I I I I I   O   O)
-;;  #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
-;;
-;;  [--------------------------------------------------
-;;   (use-lvs-ok srs T Λ £ ℑ [] [] ℑ)]
-;;
-;;  [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
-;;   (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
-;;   --------------------------------------------------
-;;   (use-lvs-ok srs T Λ £ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
-;;
-;;  )
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; use-lv-ok and use-lvs-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (use-lv-ok I   I I I I I  O  O)
+  #:contract (use-lv-ok srs T Λ £ ℑ lv ty ℑ)
+
+  ;; If `lv` is POD, it is not moved but rather copied.
+  [(where ty (lvtype srs T lv))
+   (can-read-from srs T Λ £ ℑ lv)
+   (side-condition (ty-is-pod srs ty))
+   --------------------------------------------------
+   (use-lv-ok srs T Λ £ ℑ lv ty ℑ)]
+
+  ;; Otherwise, each use deinitializes the value:
+  [(where ty (lvtype srs T lv))
+   (can-move-from srs T Λ £ ℑ lv)
+   (side-condition (¬ (ty-is-pod srs ty)))
+   --------------------------------------------------
+   (use-lv-ok srs T Λ £ ℑ lv ty (\\ ℑ (owned-subpaths srs T lv)))]
+  )
+
+;; using a ~ pointer kills both that pointer and any owned subpaths
+(test-equal
+ (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+                            [owned-B (* owned-B) ((* owned-B) · 0)]
+                            owned-B ty ℑ)
+                 (ty / ℑ))
+ (term [((~ (struct B (static))) / [])]))
+
+;; using an int doesn't kill anything
+(test-equal
+ (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+                            [owned-B (* owned-B) ((* owned-B) · 0)]
+                            ((* owned-B) · 0) ty ℑ)
+                 (ty / ℑ))
+ (term [(int / [owned-B (* owned-B) ((* owned-B) · 0)])]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; use-lvs-ok -- uses a sequence of lvalues in order
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (use-lvs-ok I   I I I I I   O   O)
+  #:contract (use-lvs-ok srs T Λ £ ℑ lvs tys ℑ)
+
+  [--------------------------------------------------
+   (use-lvs-ok srs T Λ £ ℑ [] [] ℑ)]
+
+  [(use-lv-ok srs T Λ £ ℑ lv_0 ty_0 ℑ_0)
+   (use-lvs-ok srs T Λ £ ℑ_0 [lv_1 ...] [ty_1 ...] ℑ_1)
+   --------------------------------------------------
+   (use-lvs-ok srs T Λ £ ℑ [lv_0 lv_1 ...] [ty_0 ty_1 ...] ℑ_1)]
+
+  )
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; rv-ok
 ;;
