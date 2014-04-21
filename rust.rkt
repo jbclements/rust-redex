@@ -2534,68 +2534,68 @@
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lv-partially-initialized
+;; lv-shallowly-initialized
 ;;
 ;; Holds if the lvalue lv is initialized, though some subpaths may not be
 
 (define-metafunction Patina-typing
-  lv-partially-initialized : Δ lv -> boolean
+  lv-shallowly-initialized : Δ lv -> boolean
 
-  [(lv-partially-initialized Δ lv)
+  [(lv-shallowly-initialized Δ lv)
    (∄ [(∈ lv_b Δ) ...])
    (where [lv_b ...] (prefix-paths lv))]
   )
 
 (test-equal
- (term (lv-partially-initialized [] p))
+ (term (lv-shallowly-initialized [] p))
  #t)
 
 (test-equal
- (term (lv-partially-initialized [] (* p)))
+ (term (lv-shallowly-initialized [] (* p)))
  #t)
 
 (test-equal
- (term (lv-partially-initialized [p] p))
+ (term (lv-shallowly-initialized [p] p))
  #f)
 
 (test-equal
- (term (lv-partially-initialized [(* p)] p))
+ (term (lv-shallowly-initialized [(* p)] p))
  #t)
 
 (test-equal
- (term (lv-partially-initialized [p] (* p)))
+ (term (lv-shallowly-initialized [p] (* p)))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; lv-fully-initialized Δ lv
+;; lv-deeply-initialized Δ lv
 ;;
 ;; Hold if the lvalue lv is fully initialized.
 
 (define-metafunction Patina-typing
-  lv-fully-initialized : Δ lv -> boolean
+  lv-deeply-initialized : Δ lv -> boolean
 
-  [(lv-fully-initialized [lv_Δ ...] lv)
+  [(lv-deeply-initialized [lv_Δ ...] lv)
    (∄ [(paths-intersect lv lv_Δ) ...])]
   )
 
 (test-equal
- (term (lv-fully-initialized [] p))
+ (term (lv-deeply-initialized [] p))
  #t)
 
 (test-equal
- (term (lv-fully-initialized [] (* p)))
+ (term (lv-deeply-initialized [] (* p)))
  #t)
 
 (test-equal
- (term (lv-fully-initialized [p] p))
+ (term (lv-deeply-initialized [p] p))
  #f)
 
 (test-equal
- (term (lv-fully-initialized [(* p)] p))
+ (term (lv-deeply-initialized [(* p)] p))
  #f)
 
 (test-equal
- (term (lv-fully-initialized [p] (* p)))
+ (term (lv-deeply-initialized [p] (* p)))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -3019,7 +3019,7 @@
   #:contract (can-access srs T Λ £ Δ lv)
 
   [;; Data must be initialized:
-   (side-condition (lv-fully-initialized Δ lv))
+   (side-condition (lv-deeply-initialized Δ lv))
 
    ;; The path lv cannot be restricted by a loan:
    ;;
@@ -3261,12 +3261,12 @@
    --------------------------------------------------
    (can-init srs T Λ Δ x)]
 
-  [(side-condition (lv-partially-initialized Δ lv))
+  [(side-condition (lv-shallowly-initialized Δ lv))
    (side-condition (∈ (lv · f) Δ))
    --------------------------------------------------
    (can-init srs T Λ Δ (lv · f))]
 
-  [(side-condition (lv-partially-initialized Δ lv))
+  [(side-condition (lv-shallowly-initialized Δ lv))
    (side-condition (∈ (* lv) Δ))
    (where (~ ty) (lvtype srs T lv))
    --------------------------------------------------
@@ -3724,9 +3724,9 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (lv := rv) £_rv Δ_rv)]
 
-  [(use-lvs-ok srs T Λ £ Δ [lv] [ty] Δ_1)
+  [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
    --------------------------------------------------
-   (st-ok (srs fns) T Λ VL £ Δ (free lv) £ Δ_1)]
+   (st-ok (srs fns) T Λ VL £ Δ (drop lv) £ Δ_1)]
 
   )
 
