@@ -4110,6 +4110,33 @@
                               []))))
  #t)
 
+;; test call to drop-owned-B where data is borrowed
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun test-fn [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              [(y (& l1 imm (struct B (l0))))]
+                              [(y = (& l1 imm (* x)))
+                               (call drop-owned-B [l0] [x])
+                               ]))))
+ #f)
+
+;; confine borrow to a subblock
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun test-fn [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              []
+                              [(block l2
+                                      [(y (& l2 imm (struct B (l0))))]
+                                      [(y = (& l2 imm (* x)))
+                                       ])
+                               (call drop-owned-B [l0] [x])
+                               ]))))
+ #t)
+
 ;(test-equal
 ; (judgment-holds (fn-ok ,sum-prog ,sum-main))
 ; #t)
