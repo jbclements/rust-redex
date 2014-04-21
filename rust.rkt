@@ -422,6 +422,18 @@
 (test-equal (term (size [])) (term 0))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; if-true list bools -- like filter but takes a list of booleans
+
+(define-metafunction Patina-machine
+  if-true : [any ...] [boolean ...] -> [any ...]
+
+  [(if-true any_0 any_1)
+   ,(map car (filter cadr (map list (term any_0) (term any_1))))])
+
+(test-equal (term (if-true [1 2 3 4 5] [#f #t #f #t #f]))
+            (term [2 4]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ∀, ∃ -- useful functions for operating over vectors of booleans.
 ;; Particularly useful in combination with macros and maps.
 
@@ -2184,6 +2196,23 @@
                            ]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lifetime-=, lifetime-≠
+
+(define-metafunction Patina-typing
+  lifetime-= : ℓ ℓ -> boolean
+
+  [(lifetime-= ℓ_1 ℓ_1) #t]
+  [(lifetime-= ℓ_1 ℓ_2) #f]
+  )
+
+(define-metafunction Patina-typing
+  lifetime-≠ : ℓ ℓ -> boolean
+
+  [(lifetime-≠ ℓ_1 ℓ_1) #f]
+  [(lifetime-≠ ℓ_1 ℓ_2) #t]
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-≤
 
 (define-judgment-form
@@ -2706,7 +2735,10 @@
   initialize-lv : Δ lv -> Δ
 
   [(initialize-lv Δ lv)
-   ,(filter (lambda (δ) (term (¬ (path-is-prefix-of lv ,δ)))) (term Δ))]
+   (if-true [lv_Δ ...]
+            [(¬ (path-is-prefix-of lv lv_Δ)) ...])
+   (where [lv_Δ ...] Δ)
+   ]  
 
   )
 
@@ -3627,6 +3659,39 @@
  (term []))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; expire-loans
+
+(define-metafunction Patina-typing
+  expire-loans : ℓ £ -> £
+
+  [(expire-loans ℓ_e [(ℓ mq lv) ...])
+   (if-true [(ℓ mq lv) ...]
+            [(lifetime-≠ ℓ ℓ_e) ...])]
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; expire-paths
+
+(define-metafunction Patina-typing
+  expire-paths : lvs Δ -> Δ
+
+  [(expire-paths lvs [lv_Δ ...])
+   (if-true [lv_Δ ...]
+            [(should-expire-path lvs lv_Δ) ...])]
+  )
+
+(define-metafunction Patina-typing
+  should-expire-path : lvs lv -> boolean
+
+  [(should-expire-path [lv_e ...] lv)
+   (∄ [(path-is-prefix-of lv_e lv) ...])]
+  )
+
+(test-equal
+ (term (expire-paths [x] [(* x) x (* y) y]))
+ (term [(* y) y]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; rv-ok
 
 (define-judgment-form
@@ -3797,6 +3862,10 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (drop lv) £ Δ_1)]
 
+  [(bk-ok prog T Λ VL £ Δ bk £ Δ_1)
+   --------------------------------------------------
+   (st-ok prog T Λ VL £ Δ bk £ Δ_1)]
+
   )
 
 ;; test initializing an uninitialized i with a constant
@@ -3883,17 +3952,78 @@
   (£ Δ))
  (term []))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; bk-ok
-;;;; 
-;;;; (define-judgment-form
-;;;;   Patina-typing
-;;;;   #:mode     (bk-ok I    I I I I I  O O)
-;;;;   #:contract (bk-ok prog T Λ ℜ ℑ bk ℑ ℜ)
-;;;; 
-;;;;   [(where [vdecls_0 ...] T)
-;;;;    (where T_1 [vdecls_1 vdecls_0 ...])
-;;;;    --------------------------------------------------
-;;;;    (bk-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
-;;;; 
-;;;;   )
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; sts-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (sts-ok I    I I I  I I I   O O)
+  #:contract (sts-ok prog T Λ VL £ Δ sts £ Δ)
+
+  [--------------------------------------------------
+   (sts-ok prog T Λ VL £ Δ [] £ Δ)]
+
+  [(st-ok prog T Λ VL £_0 Δ_0 st_1 £_1 Δ_1)
+   (sts-ok prog T Λ VL £_1 Δ_1 [st_2 ...] £_2 Δ_2)
+   --------------------------------------------------
+   (sts-ok prog T Λ VL £_0 Δ_0 [st_1 st_2 ...] £_2 Δ_2)]
+  )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; bk-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (bk-ok I    I I I  I I I  O O)
+  #:contract (bk-ok prog T Λ VL £ Δ bk £ Δ)
+
+  [(where (block ℓ_b [(x_b ty_b) ...] sts_b) bk)
+
+   ;; variables types for new block:
+   (where [vdecls ...] T)
+   (where T_b [[(x_b ty_b) ...] vdecls ...])
+
+   ;; add block lifetime ℓ_b, make it a sublifetime of all others in scope:
+   (where Λ_b (∪ Λ [(ℓ_b (in-scope-lifetimes Λ))]))
+
+   ;; lifetime of block variables is always ℓ_b:
+   (where [vls ...] VL)
+   (where VL_b [[(x_b ℓ_b) ...] vls ...])
+
+   ;; all block variables initially uninitialized:
+   (where Δ_b (∪ Δ [x_b ...]))
+
+   (sts-ok (srs fns) T_b Λ_b VL_b £ Δ_b sts_b £_sts Δ_sts)
+
+   ;; all local variables must be dropped by user (if needed)
+   (lv-dropped-if-necessary srs T_b Δ_sts x_b) ...
+
+   ;; remove loans and paths that are specific to this block
+   (where Δ_bk (expire-paths [x_b ...] Δ_sts))
+   (where £_bk (expire-loans ℓ_b £_sts))
+   --------------------------------------------------
+   (bk-ok (srs fns) T Λ VL £ Δ bk £_bk Δ_bk)]
+  )
+
+(test-equal
+ (judgment-holds
+  (bk-ok [,test-srs []] [] [] [] [] []
+         (block l0
+                [(r int)]
+                [(r = 3)
+                 (r := 4)])
+         £ Δ)
+  (£ Δ))
+ (term [([] [])]))
+
+(test-equal
+ (judgment-holds
+  (bk-ok [,test-srs []] [] [] [] [] []
+         (block l0
+                [(r int)
+                 (s int)]
+                [(r = 3)
+                 (r := s)])
+         £ Δ)
+  (£ Δ))
+ (term []))
