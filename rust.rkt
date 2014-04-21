@@ -2195,6 +2195,17 @@
                             ]
                            ]))
 
+(define test-ty-srs test-srs)
+(define test-ty-fns
+  (term [(fun drop-owned-B [l0] [(x (~ (struct B (l0))))]
+              (block l1
+                     []
+                     [(drop x)]))
+         ]))
+(define test-ty-prog (term (,test-ty-srs ,test-ty-fns)))
+
+(check-not-false (redex-match Patina-machine prog test-ty-prog))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-=, lifetime-≠
 
@@ -3862,6 +3873,17 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (drop lv) £ Δ_1)]
 
+  [;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
+   (where (fun g [ℓ_f ...] [(x_f ty_f) ...] bk_f) (fun-defn fns g))
+   ;; subst from formal lifetime to actual lifetimes
+   (where θ [(ℓ_f ℓ_a) ...])
+   ;; evaluate actual arguments provided
+   (use-lvs-ok srs T Λ £ Δ lvs_a [ty_a ...] Δ_a)
+   ;; check that each argument is a subtype of the expected type
+   (subtype Λ ty_a (subst-ty θ ty_f)) ...
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ VL £ Δ (call g [ℓ_a ...] lvs_a) £ Δ_a)]
+
   [(bk-ok prog T Λ VL £ Δ bk £ Δ_1)
    --------------------------------------------------
    (st-ok prog T Λ VL £ Δ bk £ Δ_1)]
@@ -3952,6 +3974,15 @@
   (£ Δ))
  (term []))
 
+;; test calls to a function
+(test-equal
+ (judgment-holds
+  (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (call drop-owned-B [static] [owned-B])
+         £ Δ)
+  (£ Δ))
+ (term [([] [owned-B])]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; sts-ok
 
@@ -4041,7 +4072,7 @@
    (where (block ℓ_bk vdecls_bk sts_bk) bk)
    (where T  [[(x ty) ...]])
    (where Λ  [(ℓ []) ...])    ;; FIXME - establish initial relations between lifetimes
-   (where VL [[x ℓ_bk] ...])
+   (where VL [[(x ℓ_bk)] ...])
    (bk-ok (srs fns) T Λ VL [] [] bk £ Δ)
 
    ;; all parameters must be dropped
@@ -4049,6 +4080,35 @@
    --------------------------------------------------
    (fn-ok (srs fns) (fun g [ℓ ...] [(x ty) ...] bk))]
   )
+
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun drop-owned-B [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              []
+                              [(drop x)]))))
+ #t)
+
+;; can't type check if I forget to (drop x)
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun drop-owned-B [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              []
+                              []))))
+ #f)
+
+;; but it's ok if we don't own `x`
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun drop-owned-B [l0] [(x (& l0 imm (struct B (l0))))]
+                       (block l1
+                              []
+                              []))))
+ #t)
 
 ;(test-equal
 ; (judgment-holds (fn-ok ,sum-prog ,sum-main))
@@ -4066,4 +4126,5 @@
    (fn-ok prog fn) ...
    --------------------------------------------------
    (prog-ok prog)]
-  )
+  
+)
