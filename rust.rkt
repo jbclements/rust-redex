@@ -4050,9 +4050,9 @@
    (fn-ok (srs fns) (fun g [ℓ ...] [(x ty) ...] bk))]
   )
 
-(test-equal
- (judgment-holds (fn-ok ,sum-prog ,sum-main))
- #t)
+;(test-equal
+; (judgment-holds (fn-ok ,sum-prog ,sum-main))
+; #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; prog-ok
