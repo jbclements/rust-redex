@@ -52,9 +52,9 @@
       (copy lv)                    ;; copy POD lvalue
       (& ℓ mq lv)                  ;; take address of lvalue
       (struct s ℓs (lv ...))       ;; struct constant
-      (new lv)                     ;; allocate memory
       number                       ;; constant number
       (lv + lv)                    ;; sum
+      (new lv)                     ;; allocate memory
       (Some lv)                    ;; create an Option with Some
       (None ty)                    ;; create an Option with None
       (vec ty lv ...)              ;; create a fixed-length vector
@@ -956,7 +956,7 @@
 (define-metafunction Patina-machine
   sizeof-dst : srs ty hv -> z
   
-  [(sizeof-dst srs (vec ty) (int l))
+  [(sizeof-dst srs (vec ty erased) (int l))
    ,(* (term (sizeof srs ty)) (term l))]
 
   [(sizeof-dst srs (struct s ℓs) hv)
@@ -1688,6 +1688,57 @@
             (term ((ptr 22) (int 3))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; free-pointer srs H α ty -> H
+;;
+;; `α` should contain a pointer to memory of type `ty`. Frees the memory
+;; pointed at by `α` (shallowly).
+
+(define-metafunction Patina-machine
+  free-pointer : srs H α ty -> H
+
+  [(free-pointer srs H α ty)
+   H_1
+   (side-condition (not (term (is-DST srs ty))))
+   (where (ptr β) (deref H α))
+   (where z (sizeof srs ty))
+   (where H_1 (shrink H β z))
+   ]
+
+  [(free-pointer srs H α ty)
+   H_1
+   (side-condition (term (is-DST srs ty)))
+   (where (ptr β) (deref H α))
+   (where hv (deref H (inc α)))
+   (where z (sizeof-dst srs ty hv))
+   (where H_1 (shrink H β z))
+   ]
+
+  )
+
+; free a ~int
+(test-equal (term (free-pointer ,test-srs
+                                [(1 (int 22))
+                                 (10 (ptr 99))
+                                 (99 (int 33))]
+                                10
+                                int))
+            (term [(1 (int 22)) (10 (ptr 99))]))
+
+; free a ~[int] of len 3
+(test-equal (term (free-pointer ,test-srs
+                                [(1 (int 22))
+                                 (10 (ptr 95))
+                                 (11 (int 3))
+                                 (95 (int 33))
+                                 (96 (int 34))
+                                 (97 (int 35))
+                                 (98 (int 36))
+                                 ]
+                                10
+                                (vec int erased)))
+            (term [(1 (int 22)) (10 (ptr 95)) (11 (int 3)) (98 (int 36))]))
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; drop-contents -- drops the memory owned by `α` which has type `ty`
 ;;
 ;; Note that this does *not* free (or deinitialize) `α` itself!
@@ -1791,6 +1842,32 @@
                             ,test-T
                             p))
             (term (deinit (shrink ,test-H 99 1) 11 1)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; free-variables -- pop the stack frame for a block; i.e., shallowly remove the
+;; memory used by its variables
+
+(define-metafunction Patina-machine
+  free-variables : srs H vmap vdecls -> H
+
+  [(free-variables srs H [] []) H]
+  [(free-variables srs
+                   H
+                   [(x_0 α_0) (x_1 α_1) ...]
+                   [(x_0 ty_0) (x_1 ty_1) ...])
+   (free-variables srs H_1 [(x_1 α_1) ...] [(x_1 ty_1) ...])
+   (where z (sizeof srs ty_0))
+   (where H_1 (shrink H α_0 z))]
+  )
+
+;; frees the memory used b the local variables, but not what they may reference
+(test-equal (term (free-variables ,test-srs
+                                  [(1 (int 22))
+                                   (10 (ptr 99))
+                                   (99 (int 33))]
+                                  [(i 1) (p 10)]
+                                  [(i int) (p (~ int))]))
+            (term ((99 (int 33)))))
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; drop-variables -- drops variables upon exit from a block,
@@ -1905,6 +1982,11 @@
         ((srs fns) H_1 V T [(ℓ (st ...)) sf ...])
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
+
+   ;; Frees. lv should be a pointer.
+   [--> ((srs fns) H V T [(ℓ ((free lv) st ...)) sf ...])
+        ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
+        (where H_1 (free-pointer srs H V T lv))]
 
    ;; Drops. The memory for the lvalue should be fully initialized.
    [--> ((srs fns) H V T [(ℓ ((drop lv) st ...)) sf ...])
