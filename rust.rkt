@@ -135,7 +135,7 @@
                          (struct A ())
                          (struct C (l0))
                          (struct B (l0))))
-         (struct E () ((~ int)))
+         (struct E () [(~ int)])
          ]))
 
 (check-not-false (redex-match Patina-machine srs test-srs))
@@ -2162,6 +2162,7 @@
 ;;      let r-imm-B: &'b B<'static>;
 ;;      let r-mut-B: &'b B<'static>;
 ;;      let owned-B: ~B<'static>;
+;;      let owned-E: ~E;
 ;;      let r-mut-int: &'a mut int
 ;;    }
 ;; }
@@ -2174,6 +2175,7 @@
                            (r-imm-B (& b imm (struct B (static))))
                            (r-mut-B (& b mut (struct B (static))))
                            (owned-B (~ (struct B (static))))
+                           (owned-E (~ (struct E ())))
                            (r-mut-int (& a mut int))
                            ]
                           ]))
@@ -2184,6 +2186,7 @@
                             (r-imm-B b)
                             (r-mut-B b)
                             (owned-B b)
+                            (owned-E b)
                             (r-mut-int b)
                             ]
                            ]))
@@ -2349,6 +2352,60 @@
 (test-equal
  (term (ty-is-pod ,test-srs (struct E [])))
  #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ty-needs-drop
+
+(define-metafunction Patina-typing
+  ty-needs-drop : srs ty -> boolean
+
+  [(ty-needs-drop srs int) #f]
+
+  [(ty-needs-drop srs (& ℓ imm ty)) #f]
+
+  [(ty-needs-drop srs (& ℓ mut ty)) #f]
+
+  [(ty-needs-drop srs (~ ty)) #t]
+
+  [(ty-needs-drop srs (Option ty)) (ty-needs-drop srs ty)]
+
+  [(ty-needs-drop srs (struct s ℓs))
+   (∃ [(ty-needs-drop srs ty_s) ...])
+   (where [ty_s ...] (field-tys srs s ℓs))]
+   
+  )
+
+(test-equal
+ (term (ty-needs-drop [] int))
+ #f)
+
+(test-equal
+ (term (ty-needs-drop [] (Option int)))
+ #f)
+
+(test-equal
+ (term (ty-needs-drop [] (~ int)))
+ #t)
+
+(test-equal
+ (term (ty-needs-drop [] (Option (~ int))))
+ #t)
+
+(test-equal
+ (term (ty-needs-drop [] (& b imm int)))
+ #f)
+
+(test-equal
+ (term (ty-needs-drop [] (& b mut int)))
+ #f)
+
+(test-equal
+ (term (ty-needs-drop ,test-srs (struct A [])))
+ #f)
+
+(test-equal
+ (term (ty-needs-drop ,test-srs (struct E [])))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; in-scope-lifetimes
@@ -2599,6 +2656,56 @@
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; lv-dropped-if-necessary
+;;
+;; True if lv has been dropped or does not need to be dropped.
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (lv-dropped-if-necessary I   I I I )
+  #:contract (lv-dropped-if-necessary srs T Δ lv)
+
+  [(side-condition (∈ lv Δ))
+   --------------------------------------------------
+   (lv-dropped-if-necessary srs T Δ lv)]
+
+  [(where (struct s ℓs) (lvtype srs T lv))
+   (where [f ...] (field-names srs s ℓs))
+   (lv-dropped-if-necessary srs T Δ (lv · f)) ...
+   --------------------------------------------------
+   (lv-dropped-if-necessary srs T Δ lv)]
+
+  [(where ty (lvtype srs T lv))
+   (side-condition (¬ (ty-needs-drop srs ty)))
+   --------------------------------------------------
+   (lv-dropped-if-necessary srs T Δ lv)]
+
+  )
+
+;; owned pointer and it is not dropped
+(test-equal
+ (judgment-holds (lv-dropped-if-necessary ,test-srs ,test-ty-T [] owned-B))
+ #f)
+
+;; this field has type int
+(test-equal
+ (judgment-holds (lv-dropped-if-necessary ,test-srs ,test-ty-T [] ((* owned-B) · 0)))
+ #t)
+
+;; none of the fields of struct B require drop
+(test-equal
+ (judgment-holds (lv-dropped-if-necessary ,test-srs ,test-ty-T [] (* owned-B)))
+ #t)
+
+;; but struct E's fields do
+(test-equal
+ (judgment-holds (lv-dropped-if-necessary ,test-srs ,test-ty-T [] (* owned-E)))
+ #f)
+(test-equal
+ (judgment-holds (lv-dropped-if-necessary ,test-srs ,test-ty-T [((* owned-E) · 0)] (* owned-E)))
+ #t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; initialize-lv Δ lv
 ;;
 ;; Returns a modified Δ in which lv is initialized
@@ -2731,46 +2838,6 @@
 (test-equal
  (judgment-holds (owned-path ,test-srs ,test-T (* r)))
  #t)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; owned-subpaths
-;;
-;; Elaborates from a owned path `lv` to a complete set of owned sub-paths,
-;; as appropriate for the type of `lv`
-
-(define-metafunction Patina-typing
-  owned-subpaths : srs T lv -> [lv ...]
-  
-  [(owned-subpaths srs T lv)
-   [lv lv_1 ... lv_2 ...]
-   (where [lv_1 ...] (owned-subpaths1 srs T lv))
-   (where [lv_2 ...] ,(append* (term [(owned-subpaths1 srs T lv_1) ...])))
-   ]
-  )
-
-(define-metafunction Patina-typing
-  owned-subpaths1 : srs T lv -> [lv ...]
-
-  [(owned-subpaths1 srs T lv)
-   [(lv · f) ...]
-   (where (struct s ℓs) (lvtype srs T lv))
-   (where [f ...] (field-names srs s ℓs))]
-
-  [(owned-subpaths1 srs T lv)
-   [(* lv)]
-   (where (~ ty) (lvtype srs T lv))]
-  
-  [(owned-subpaths1 srs T lv)
-   []]
-  )
-
-(test-equal
- (term (owned-subpaths ,test-srs ,test-T b))
- (term [b (b · 0) (b · 1)]))
-
-(test-equal
- (term (owned-subpaths ,test-srs ,test-T r))
- (term [r (* r)]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; paths-restricted-by-loans
