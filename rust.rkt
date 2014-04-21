@@ -3581,19 +3581,19 @@
 
   ;; & ℓ imm lv
   [(where ty (lvtype srs T lv))
-   (can-read-from srs T Λ Δ (mut-loans £) lv)
+   (can-read-from srs T Λ £ Δ lv)
    (path-freezable-for srs T Λ ℓ lv)
    (path-outlives srs T Λ VL ℓ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ VL £ Δ (& ℓ imm lv) (& ℓ imm ty) Δ (∪ £ [ℓ imm lv]))]
+   (rv-ok srs T Λ VL £ Δ (& ℓ imm lv) (& ℓ imm ty) (∪ £ [(ℓ imm lv)]) Δ)]
 
   ;; & ℓ mut lv
   [(where ty (lvtype srs T lv))
-   (can-write-to srs T Λ Δ (mut-loans £) lv)
+   (can-write-to srs T Λ £ Δ lv)
    (path-unique-for srs T Λ ℓ lv)
    (path-outlives srs T Λ VL ℓ lv)
    --------------------------------------------------
-   (rv-ok srs T Λ VL £ Δ (& ℓ mut lv) (& ℓ mut ty) Δ (∪ £ [ℓ mut lv]))]
+   (rv-ok srs T Λ VL £ Δ (& ℓ mut lv) (& ℓ mut ty) (∪ £ [(ℓ mut lv)]) Δ)]
 
   ;; struct s ℓs [lv ...]
   [(where [ty_f ...] (field-tys srs s [ℓ ...]))
@@ -3610,7 +3610,7 @@
   ;; lv + lv
   [(use-lvs-ok srs T Λ £ Δ [lv_1 lv_2] [int int] Δ)
    --------------------------------------------------
-   (rv-ok srs T Λ VL £ Δ (lv_1 + lv_2) int Δ £)]
+   (rv-ok srs T Λ VL £ Δ (lv_1 + lv_2) int £ Δ)]
 
   ;; (Some lv)
   [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
@@ -3752,6 +3752,22 @@
          (i := 3) £ Δ)
   (£ Δ))
  (term [([] [])]))
+
+;; test overwriting i with a new value of wrong type
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (i := (struct A [] [i])) £ Δ)
+  (£ Δ))
+ (term []))
+
+;; test borrowing i
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [r-mut-int]
+         (r-mut-int = (& a mut i)) £ Δ)
+  (£ Δ))
+ (term [([(a mut i)] [])]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; bk-ok
