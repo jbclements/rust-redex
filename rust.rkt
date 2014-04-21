@@ -48,8 +48,7 @@
       (lv @ lv)                    ;; indexing
       (* lv))                      ;; deref
   ;; rvalues :
-  (rv lv                           ;; move lvalue
-      (copy lv)                    ;; copy POD lvalue
+  (rv lv                           ;; use lvalue
       (& ℓ mq lv)                  ;; take address of lvalue
       (struct s ℓs (lv ...))       ;; struct constant
       number                       ;; constant number
@@ -61,7 +60,7 @@
       (vec-len lv)                 ;; extract length of a vector
       (pack lv ty)                 ;; convert fixed-length to DST
       )
-  (mode (ref mq) move)
+  (mode (ref mq) by-value)
   ;; types : 
   (tys (ty ...))
   (ty (struct s ℓs)             ;; s<'ℓ...>
@@ -282,7 +281,7 @@
                              (outp (& b mut int))]
              (block l0
                     [(r int)]
-                    [(r = (copy ((* inp) · 0)))
+                    [(r = ((* inp) · 0))
                      (match ((* inp) · 1)
                        (Some (ref imm) next1 =>
                              (block l1 [(next2 (& l1 imm (struct List [])))
@@ -295,7 +294,7 @@
                                              ((* outp) = (r + b))])]))
                        (None =>
                              (block l2 []
-                                    [((* outp) = (copy r))])))]))))
+                                    [((* outp) = r)])))]))))
 (check-not-false (redex-match Patina-machine fn sum-sum_list))
 
 (define sum-fns
@@ -342,7 +341,7 @@
                      (i2 = ((((* rdNp) · 1) @ i1) + i2))
                      (i1 = 2)
                      (i2 = ((((* rdNp) · 1) @ i1) + i2))
-                     ((* outp) = (copy i2))
+                     ((* outp) = i2)
                      ]))))
 (check-not-false (redex-match Patina-machine fn dst-main))
 
@@ -1037,31 +1036,6 @@
                    (22 (ptr 3))]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; memmove -- copies memory then deinitializes the source
-
-(define-metafunction Patina-machine
-  memmove : H α β z -> H
-  
-  [(memmove H α β z)
-   (deinit (memcopy H α β z) β z)])
-
-(test-equal (term (memmove [(10 (ptr 1))
-                            (11 (int 2))
-                            (12 (ptr 3))
-                            (20 (ptr 4))
-                            (21 (int 5))
-                            (22 (ptr 6))]
-                           20
-                           10
-                           3))
-            (term [(10 void)
-                   (11 void)
-                   (12 void)
-                   (20 (ptr 1))
-                   (21 (int 2))
-                   (22 (ptr 3))]))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; vaddr -- lookup addr of variable in V
  
 (define-metafunction Patina-machine
@@ -1320,16 +1294,16 @@
 (test-equal (cadr (term (malloc () 2))) 0)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; movemany -- like memmove but for a series of regions
+;; copymany -- like memcopy but for a series of regions
 
 (define-metafunction Patina-machine
-  movemany : H zs αs βs -> H
+  copymany : H zs αs βs -> H
 
-  [(movemany H () () ())
+  [(copymany H () () ())
    H]
 
-  [(movemany H (z_0 z_1 ...) (α_0 α_1 ...) (β_0 β_1 ...))
-   (movemany (memmove H α_0 β_0 z_0)
+  [(copymany H (z_0 z_1 ...) (α_0 α_1 ...) (β_0 β_1 ...))
+   (copymany (memcopy H α_0 β_0 z_0)
              (z_1 ...)
              (α_1 ...)
              (β_1 ...))])
@@ -1363,19 +1337,12 @@
 (define-metafunction Patina-machine
   rveval : srs H V T α rv -> H
 
-  [(rveval srs H V T α (copy lv))
+  [(rveval srs H V T α lv)
    H_1
    (where ty (lvtype srs T lv))
    (where z (sizeof srs ty))
    (where β (lvaddr srs H V T lv))
    (where H_1 (memcopy H α β z))]
-
-  [(rveval srs H V T α (lv))
-   H_1
-   (where ty (lvtype srs T lv))
-   (where z (sizeof srs ty))
-   (where β (lvaddr srs H V T lv))
-   (where H_1 (memmove H α β z))]
 
   [(rveval srs H V T α (& ℓ mq lv))
    H_1
@@ -1394,7 +1361,7 @@
    (side-condition (term (is-DST srs ty)))]
 
   [(rveval srs H V T α (struct s ℓs lvs))
-   (movemany H zs_0 βs αs)
+   (copymany H zs_0 βs αs)
 
    ;; types of each field:
    (where tys (field-tys srs s ℓs))
@@ -1414,7 +1381,7 @@
    (where z (sizeof srs ty))
    (where β (lvaddr srs H V T lv))
    (where (H_1 γ) (malloc H z))
-   (where H_2 (memmove H_1 γ β z))]
+   (where H_2 (memcopy H_1 γ β z))]
    
   [(rveval srs H V T α number)
    (update H α (int number))]
@@ -1435,7 +1402,7 @@
    (where z (sizeof srs ty))
    (where β (lvaddr srs H V T lv))
    (where α_p ,(add1 (term α)))
-   (where H_1 (memmove H α_p β z))
+   (where H_1 (memcopy H α_p β z))
    (where H_2 (update H_1 α (int 1)))]
 
   [(rveval srs H V T α (None ty))
@@ -1460,17 +1427,17 @@
    ;; find addresses β_e of each element
    (where [z_o ...] (vec-offsets srs ty l_v))
    (where [β_e ...] ((offset α z_o) ...))
-   ;; move lvalues into their new homes
-   (where H_1 (movemany H [z_e ...] [β_e ...] [α_e ...]))]
+   ;; copy lvalues into their new homes
+   (where H_1 (copymany H [z_e ...] [β_e ...] [α_e ...]))]
 
   ;; pack from ~ty_s to ~ty_d where ty_d is DST
   ;; (see nearly identical borrowed pointer rule below)
   [(rveval srs H V T α (pack lv_s (~ ty_d)))
    H_2
 
-   ;; move pointer value
+   ;; copy pointer value
    (where α_s (lvaddr srs H V T lv_s))
-   (where H_1 (memmove H α α_s 1))
+   (where H_1 (memcopy H α α_s 1))
 
    ;; reify component of type and store into heap at offset 1 of fat
    ;; pointer
@@ -1483,9 +1450,9 @@
   [(rveval srs H V T α (pack lv_s (& ℓ mq ty_d)))
    H_2
 
-   ;; move pointer value
+   ;; copy pointer value
    (where α_s (lvaddr srs H V T lv_s))
-   (where H_1 (memmove H α α_s 1))
+   (where H_1 (memcopy H α α_s 1))
 
    ;; reify component of type and store into heap at offset 1 of fat
    ;; pointer
@@ -1537,7 +1504,7 @@
                             ,test-V
                             ,test-T
                             a))
-            (term (void)))
+            (term ((int 23))))
 
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs ,test-H ,test-V ,test-T
@@ -1600,16 +1567,6 @@
                             ,test-T
                             s))
             (term ((int 1) (ptr 99))))
-
-;; test that `(Some p)` deinitializes `p`
-(test-equal (term (lvselect ,test-srs
-                            (rveval ,test-srs ,test-H ,test-V ,test-T
-                                    (vaddr ,test-V s)
-                                    (Some p))
-                            ,test-V
-                            ,test-T
-                            p))
-            (term (void)))
 
 ;; test `(vec int i1 i2 i3)`
 (test-equal (term (lvselect ,test-srs
@@ -1897,12 +1854,12 @@
    ;; update mem location with ptr to payload
    (where H_u (update H_m α_m (ptr α)))]
 
-  [(unwrap srs H ℓ move ty α)
+  [(unwrap srs H ℓ by-value ty α)
    (H_u ty α_m)
    ;; generate memory for `x_m`
    (where (H_m α_m) (malloc H (sizeof srs ty)))
-   ;; move payload from α into α_m
-   (where H_u (memmove H_m α_m α (sizeof srs ty)))]
+   ;; copy payload from α into α_m
+   (where H_u (memcopy H_m α_m α (sizeof srs ty)))]
   )
 
 (test-equal (term (unwrap ,test-srs ,test-H l1 (ref mut) (~ int)
@@ -1911,10 +1868,9 @@
                    (& l1 mut (~ int))
                    100)))
 
-(test-equal (term (unwrap ,test-srs ,test-H l1 move (~ int)
+(test-equal (term (unwrap ,test-srs ,test-H l1 by-value (~ int)
                           ,(add1 (term (vaddr ,test-V s)))))
-            (term (,(append (term [(100 (ptr 95))])
-                            (term (deinit ,test-H 21 1)))
+            (term (,(append (term [(100 (ptr 95))]) test-H)
                    (~ int)
                    100)))
 
@@ -2037,7 +1993,7 @@
                                                         ,lv)))
                              (term (x_f ...))))
         ;; move from actual params into formal params:
-        (where H_2 (movemany H_1 zs_a βs_f αs_a))
+        (where H_2 (copymany H_1 zs_a βs_f αs_a))
         ]
    ))
 
@@ -2090,7 +2046,7 @@
 
 (define state-1
   (term (,twentytwo-prog
-         [(2 (ptr 0)) (0 (int 0)) (1 void)]
+         [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
          [[(outp 2)] [(resultp 1)]]
          [[(outp (& a mut int))] [(resultp (& l0 mut int))]]
          [(lX [(block l0 [] (((* outp) = 22)))])
@@ -2099,7 +2055,7 @@
 
 (define state-2
   (term (,twentytwo-prog
-         [(2 (ptr 0)) (0 (int 0)) (1 void)]
+         [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
          [[] [(outp 2)] [(resultp 1)]]
          [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
          [(l0 [((* outp) = 22)])
@@ -2109,12 +2065,12 @@
 
 (define state-3
   (term (,twentytwo-prog
-         [(2 (ptr 0)) (0 (int 22)) (1 void)]
+         [(2 (ptr 0)) (0 (int 22)) (1 (ptr 0))]
          [[] [(outp 2)] [(resultp 1)]]
          [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
          [(l0 [])
-          (lX [])
-          (l0 [])])))
+          (lX []) 
+         (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-3))
 
 (define state-N
