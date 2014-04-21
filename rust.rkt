@@ -2151,19 +2151,41 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; subtype
+;; Testing constants
 ;;
-;; FIXME
+;; Our test fn is roughly:
+;;
+;; fn foo<'p0, 'p1>() 'a: {
+;;    let i: int;
+;;    'b: {
+;;      let r-imm-B: &'b B<'static>;
+;;      let r-mut-B: &'b B<'static>;
+;;      let owned-B: ~B<'static>;
+;;      let r-mut-int: &'a mut int
+;;    }
+;; }
 
-(define-judgment-form
-  Patina-typing
-  #:mode     (subtype I I I)
-  #:contract (subtype Λ ty ty)
-
-  [--------------------------------------------------
-   (subtype Λ ty ty)]
-
-  )
+(define test-ty-Λ (term [(p0 []) (p1 []) (a [p0 p1]) (b [a p0 p1])]))
+(define test-ty-T (term [[;; block a
+                           (i int)
+                           ]
+                          [;; block b
+                           (r-imm-B (& b imm (struct B (static))))
+                           (r-mut-B (& b mut (struct B (static))))
+                           (owned-B (~ (struct B (static))))
+                           (r-mut-int (& a mut int))
+                           ]
+                          ]))
+(define test-ty-VL (term [[;; block a
+                            (i a)
+                            ]
+                           [;; block b
+                            (r-imm-B b)
+                            (r-mut-B b)
+                            (owned-B b)
+                            (r-mut-int b)
+                            ]
+                           ]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-≤
@@ -2206,6 +2228,72 @@
 (test-equal
  (judgment-holds (lifetime-≤ [(a [b c]) (b []) (c [])] b c))
  #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subtype
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (subtype I I I)
+  #:contract (subtype Λ ty ty)
+
+  [;; FIXME model variance somehow
+   --------------------------------------------------
+   (subtype Λ (struct s ℓs) (struct s ℓs))]
+
+  [(subtype Λ ty_1 ty_2)
+   --------------------------------------------------
+   (subtype Λ (~ ty_1) (~ ty_2))]
+
+  [(lifetime-≤ Λ ℓ_2 ℓ_1)
+   (subtype Λ ty_1 ty_2)
+   --------------------------------------------------
+   (subtype Λ (& ℓ_1 imm ty_1) (& ℓ_2 imm ty_2))]
+
+  [(lifetime-≤ Λ ℓ_2 ℓ_1)
+   --------------------------------------------------
+   (subtype Λ (& ℓ_1 mut ty) (& ℓ_2 mut ty))]
+
+  [--------------------------------------------------
+   (subtype Λ int int)]
+
+  [(subtype Λ ty_1 ty_2)
+   --------------------------------------------------
+   (subtype Λ (Option ty_1) (Option ty_2))]
+
+  [(subtype Λ ty_1 ty_2)
+   --------------------------------------------------
+   (subtype Λ (vec ty_1 olen) (vec ty_2 olen))]
+
+  )
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ int int))
+ #t)
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ (& b mut int) (& a mut int)))
+ #f)
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ (& static mut int) (& a mut int)))
+ #t)
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ (& a mut int) (& b mut int)))
+ #t)
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ (Option (& a mut int)) (Option (& b mut int))))
+ #t)
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ (~ (& a mut int)) (~ (& b mut int))))
+ #t)
+
+(test-equal
+ (judgment-holds (subtype ,test-ty-Λ (vec (& a mut int) 2) (vec (& b mut int) 2)))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ty-is-pod
@@ -2745,53 +2833,24 @@
 
   )
 
-
-;; Our test fn is roughly:
-;;
-;; fn foo<'p0, 'p1>() 'a: {
-;;    'b: {
-;;      let pimm: &'b B<'static>;
-;;      let pmut: &'b B<'static>;
-;;      let owned-B: ~B<'static>;
-;;    }
-;; }
-
-(define test-put-Λ (term [(p0 []) (p1 []) (a [p0 p1]) (b [a p0 p1])]))
-(define test-put-T (term [[;; block a
-                           ]
-                          [;; block b
-                           (pimm (& b imm (struct B (static))))
-                           (pmut (& b mut (struct B (static))))
-                           (owned-B (~ (struct B (static))))
-                           ]
-                          ]))
-(define test-put-VL (term [[;; block a
-                            ]
-                           [;; block b
-                            (pimm b)
-                            (pmut b)
-                            (owned-B b)
-                            ]
-                           ]))
-
 (test-equal
- (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
-                                  b pimm))
+ (judgment-holds (path-unique-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                  b r-imm-B))
  #t)
 
 (test-equal
- (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
-                                  b (* ((* pimm) · 1))))
+ (judgment-holds (path-unique-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                  b (* ((* r-imm-B) · 1))))
  #f)
 
 (test-equal
- (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
-                                  b (* ((* pmut) · 1))))
+ (judgment-holds (path-unique-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                  b (* ((* r-mut-B) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-unique-for ,test-srs ,test-put-T ,test-put-Λ
-                                  a (* ((* pmut) · 1))))
+ (judgment-holds (path-unique-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                  a (* ((* r-mut-B) · 1))))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2873,23 +2932,23 @@
   )
 
 (test-equal
- (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
-                                     b pimm))
+ (judgment-holds (path-freezable-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                     b r-imm-B))
  #t)
 
 (test-equal
- (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
-                                     b (* ((* pimm) · 1))))
+ (judgment-holds (path-freezable-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                     b (* ((* r-imm-B) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
-                                     b (* ((* pmut) · 1))))
+ (judgment-holds (path-freezable-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                     b (* ((* r-mut-B) · 1))))
  #t)
 
 (test-equal
- (judgment-holds (path-freezable-for ,test-srs ,test-put-T ,test-put-Λ
-                                     a (* ((* pmut) · 1))))
+ (judgment-holds (path-freezable-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                     a (* ((* r-mut-B) · 1))))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2939,55 +2998,55 @@
 
 ;; can't access loaned variable
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pimm)] [] pimm))
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
+                             [(a mut r-imm-B)] [] r-imm-B))
  #f)
 
-;; can't access variable pmut when (* pmut) was loaned
+;; can't access variable r-mut-B when (* r-mut-B) was loaned
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut (* pmut))] [] pmut))
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
+                             [(a mut (* r-mut-B))] [] r-mut-B))
  #f)
 
-;; can't access variable (* pmut) when pmut was loaned
+;; can't access variable (* r-mut-B) when r-mut-B was loaned
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pmut)] [] (* pmut)))
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
+                             [(a mut r-mut-B)] [] (* r-mut-B)))
  #f)
 
-;; accessing (*pmut).1 when (*pmut).0 was loaned is ok
+;; accessing (*r-mut-B).1 when (*r-mut-B).0 was loaned is ok
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut ((* pmut) · 0))] []
-                             ((* pmut) · 1)))
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
+                             [(a mut ((* r-mut-B) · 0))] []
+                             ((* r-mut-B) · 1)))
  #t)
 
 ;; can't access uninitialized variable
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pimm)] [pmut] pmut))
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
+                             [(a mut r-imm-B)] [r-mut-B] r-mut-B))
  #f)
 
 ;; can't access uninitialized referent
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
                              [] [(* owned-B)] (* owned-B)))
  #f)
 
 ;; can't access referent of uninitialized pointer
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
                              [] [owned-B] (* owned-B)))
  #f)
 
 ;; otherwise ok
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
-                             [(a mut pimm)] [] pmut))
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
+                             [(a mut r-imm-B)] [] r-mut-B))
  #t)
 
 (test-equal
- (judgment-holds (can-access ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-access ,test-srs ,test-ty-T ,test-ty-Λ
                              [] [] (* owned-B)))
  #t)
 
@@ -3008,14 +3067,14 @@
 
 ;; imm loans do not prevent reads
 (test-equal
- (judgment-holds (can-read-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(a imm pimm)] [] pimm))
+ (judgment-holds (can-read-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [(a imm r-imm-B)] [] r-imm-B))
  #t)
 
 ;; but mut loans do
 (test-equal
- (judgment-holds (can-read-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(a mut pimm)] [] pimm))
+ (judgment-holds (can-read-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [(a mut r-imm-B)] [] r-imm-B))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -3035,14 +3094,14 @@
 
 ;; imm loans do prevent writes
 (test-equal
- (judgment-holds (can-write-to ,test-srs ,test-put-T ,test-put-Λ
-                               [(a imm pimm)] [] pimm))
+ (judgment-holds (can-write-to ,test-srs ,test-ty-T ,test-ty-Λ
+                               [(a imm r-imm-B)] [] r-imm-B))
  #f)
 
 ;; as do mut loans
 (test-equal
- (judgment-holds (can-write-to ,test-srs ,test-put-T ,test-put-Λ
-                               [(a mut pimm)] [] pimm))
+ (judgment-holds (can-write-to ,test-srs ,test-ty-T ,test-ty-Λ
+                               [(a mut r-imm-B)] [] r-imm-B))
  #f)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -3065,69 +3124,69 @@
 
 ;; imm loans prevent moves
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(b imm pimm)] [] pimm))
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [(b imm r-imm-B)] [] r-imm-B))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [(b imm owned-B)] [] (* owned-B)))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [(b imm (* owned-B))] [] (* owned-B)))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [(b imm ((* owned-B) · 0))] [] (* owned-B)))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [(b imm owned-B)] [] (* owned-B)))
  #f)
 
 ;; as do mut loans
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [(b mut pimm)] [] pimm))
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [(b mut r-imm-B)] [] r-imm-B))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [(b mut owned-B)] [] (* owned-B)))
  #f)
 
 ;; otherwise ok
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [] [] pimm))
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [] [] r-imm-B))
  #t)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [] [] owned-B))
  #t)
 
 ;; but can't move from deref of borrowed pointer
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
-                                [] [] (* pimm)))
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [] [] (* r-imm-B)))
  #f)
 
 ;; can move from deref of owned pointer
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [] [] (* owned-B)))
  #t)
 
 ;; unless uninitialized
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [] [owned-B] (* owned-B)))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [] [(* owned-B)] (* owned-B)))
  #f)
 (test-equal
- (judgment-holds (can-move-from ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-move-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [] [((* owned-B) · 1)] (* owned-B)))
  #f)
 
@@ -3158,41 +3217,41 @@
 
 ;; cannot initiatialize something already written
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [] pmut))
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
+                           [] r-mut-B))
  #f)
 
 ;; cannot initiatialize borrowed data
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [] (* pmut)))
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
+                           [] (* r-mut-B)))
  #f)
 
 ;; but can initialize something that is deinitialized
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
-                           [pimm] pimm))
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
+                           [r-imm-B] r-imm-B))
  #t)
 
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
                            [(* owned-B)] (* owned-B)))
  #t)
 
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
                            [((* owned-B) · 1)] ((* owned-B) · 1)))
  #t)
 
 ;; as long as the base path is initialized
 
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
                            [owned-B (* owned-B)] (* owned-B)))
  #f)
 
 (test-equal
- (judgment-holds (can-init ,test-srs ,test-put-T ,test-put-Λ
+ (judgment-holds (can-init ,test-srs ,test-ty-T ,test-ty-Λ
                            [owned-B ((* owned-B) · 1)] ((* owned-B) · 1)))
  #f)
 
@@ -3234,73 +3293,73 @@
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
-                  static (* ((* pmut) · 1))))
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
+                  static (* ((* r-mut-B) · 1))))
  #t)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
-                  static pmut))
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
+                  static r-mut-B))
  #f)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
-                  a (* ((* pmut) · 1))))
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
+                  a (* ((* r-mut-B) · 1))))
  #t)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
-                  static (* pmut)))
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
+                  static (* r-mut-B)))
  #f)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
-                  a (* pmut)))
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
+                  a (* r-mut-B)))
  #f)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
-                  b (* pmut)))
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
+                  b (* r-mut-B)))
  #t)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                   b owned-B))
  #t)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                   b (* owned-B)))
  #t)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                   b ((* owned-B) · 0)))
  #t)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                   p0 (* owned-B)))
  #f)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                   p0 (* owned-B)))
  #f)
 
 (test-equal
  (judgment-holds (path-valid-for-lifetime
-                  ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+                  ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                   p0 ((* owned-B) · 0)))
  #f)
 
@@ -3338,12 +3397,12 @@
   )
 
 (test-equal
- (judgment-holds (path-outlives ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+ (judgment-holds (path-outlives ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                                 b (* owned-B)))
  #t)
 
 (test-equal
- (judgment-holds (path-outlives ,test-srs ,test-put-T ,test-put-Λ ,test-put-VL
+ (judgment-holds (path-outlives ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL
                                 a (* owned-B)))
  #f)
 
@@ -3373,19 +3432,19 @@
 
 ;; using a ~ or &mut pointer kills that pointer (resp. referent)
 (test-equal
- (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+ (judgment-holds (use-lv-ok ,test-srs ,test-ty-T ,test-ty-Λ []
                             []
                             owned-B ty Δ)
                  (ty / Δ))
  (term [((~ (struct B (static))) / [owned-B])]))
 (test-equal
- (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+ (judgment-holds (use-lv-ok ,test-srs ,test-ty-T ,test-ty-Λ []
                             []
                             (* owned-B) ty Δ)
                  (ty / Δ))
  (term [((struct B (static)) / [(* owned-B)])]))
 (test-equal
- (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+ (judgment-holds (use-lv-ok ,test-srs ,test-ty-T ,test-ty-Λ []
                             []
                             ((* owned-B) · 1) ty Δ)
                  (ty / Δ))
@@ -3393,7 +3452,7 @@
 
 ;; naturally it must be initialized
 (test-equal
- (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+ (judgment-holds (use-lv-ok ,test-srs ,test-ty-T ,test-ty-Λ []
                             [owned-B]
                             owned-B ty Δ)
                  (ty / Δ))
@@ -3401,7 +3460,7 @@
 
 ;; using an int doesn't kill anything
 (test-equal
- (judgment-holds (use-lv-ok ,test-srs ,test-put-T ,test-put-Λ []
+ (judgment-holds (use-lv-ok ,test-srs ,test-ty-T ,test-ty-Λ []
                             []
                             ((* owned-B) · 0) ty Δ)
                  (ty / Δ))
@@ -3425,154 +3484,166 @@
 
   )
 
+(test-equal
+ (judgment-holds (use-lvs-ok ,test-srs ,test-ty-T ,test-ty-Λ []
+                             []
+                             [owned-B] tys Δ)
+                 (tys / Δ))
+ (term [([(~ (struct B (static)))] / [owned-B])]))
+
+(test-equal
+ (judgment-holds (use-lvs-ok ,test-srs ,test-ty-T ,test-ty-Λ []
+                             []
+                             [owned-B r-imm-B] tys Δ)
+                 (tys / Δ))
+ (term [([(~ (struct B (static)))
+          (& b imm (struct B (static)))]
+         / [owned-B])]))
+
 ;; using a ~ pointer kills both that pointer and any owned subpaths
 (test-equal
- (judgment-holds (use-lvs-ok ,test-srs ,test-put-T ,test-put-Λ []
+ (judgment-holds (use-lvs-ok ,test-srs ,test-ty-T ,test-ty-Λ []
                              []
-                             [owned-B (* owned-B)] ty Δ)
-                 (ty / Δ))
+                             [owned-B (* owned-B)] tys Δ)
+                 (tys / Δ))
  (term []))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; rv-ok
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (rv-ok I   I I I I I  O  O O)
-;;  #:contract (rv-ok srs T Λ £ ℑ rv ty £ ℑ)
-;;
-;;  ;; copy x -- deprecated
-;;  [(where ty (lvtype srs T lv))
-;;   (can-read-from srs T Λ £ ℑ lv)
-;;   (side-condition (ty-is-pod srs ty))
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (copy lv) ty £ ℑ)]
-;;
-;;  ;; x
-;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty_out] ℑ_out)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ lv ty_out £ ℑ_out)]
-;;
-;;  ;; & ℓ imm lv
-;;  [(where ty (lvtype srs T lv))
-;;   (can-read-from srs T Λ ℑ (mut-loans £) lv)
-;;   (path-freezable-for srs T Λ ℓ lv)
-;;   (path-outlives srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (& ℓ imm lv) (& ℓ imm ty) ℑ (∪ £ [ℓ imm lv]))]
-;;
-;;  ;; & ℓ mut lv
-;;  [(where ty (lvtype srs T lv))
-;;   (can-write-to srs T Λ ℑ (mut-loans £) lv)
-;;   (path-unique-for srs T Λ ℓ lv)
-;;   (path-outlives srs T Λ ℓ lv)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (& ℓ mut lv) (& ℓ mut ty) ℑ (∪ £ [ℓ mut lv]))]
-;;
-;;  ;; struct s ℓs [lv ...]
-;;  [(where [ty_f ...] (field-tys srs s [ℓ ...]))
-;;   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_a ...] ℑ_a)
-;;   (lifetime-in-scope Λ ℓ) ...
-;;   (subtype Λ ty_a ty_f) ...
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) £ ℑ_a)]
-;;
-;;  ;; int
-;;  [--------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ number int £ ℑ)]
-;;
-;;  ;; lv + lv
-;;  [(use-lvs-ok srs T Λ £ ℑ [lv_1 lv_2] [int int] ℑ)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (lv_1 + lv_2) int ℑ £)]
-;;
-;;  ;; (Some lv)
-;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (Some lv) (Option ty) £ ℑ_1)]
-;;
-;;  ;; (None ty)
-;;  [;; check ty well-formed
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (None ty) (Option ty) £ ℑ)]
-;;
-;;  ;; (vec ty lv ...)
-;;  [;; check ty well-formed
-;;   (where l (size [lv ...]))
-;;   (use-lvs-ok srs T Λ £ ℑ [lv ...] [ty_lv ...] ℑ_1)
-;;   (subtype Λ ty_lv ty) ...
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (vec ty lv ...) (vec ty l) £ ℑ_1)]
-;;
-;;  ;; (vec-len lv ...)
-;;  [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
-;;   (can-read-from srs T Λ £ ℑ lv)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (vec-len lv) int £ ℑ)]
-;;
-;;  ;; (pack lv ty)
-;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
-;;   --------------------------------------------------
-;;   (rv-ok srs T Λ £ ℑ (pack lv ty) ty £ ℑ_1)]
-;;
-;;  )
-;;
-;;; Test you can copy an int and the value remains in the initialized set.
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok [] [[(i int)]] [] [] [i] (copy i) ty ℑ £)
-;;  (ty ℑ £))
-;; (term ((int [i] []))))
-;;
-;;; Test you cannot copy an uninitialized int.
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok [] [[(i int)]] [] [] [] (copy i) ty ℑ £)
-;;  (ty ℑ £))
-;; (term ()))
-;;
-;;; Test you cannot copy a ~int.
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok [] [[(i (~ int))]] [] [] [i] (copy i) ty ℑ £)
-;;  (ty ℑ £))
-;; (term ()))
-;;
-;;; ...But you can move it.
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok [] [[(i (~ int))]] [] [] [i] i ty ℑ £)
-;;  (ty ℑ £))
-;; (term (((~ int) [] []))))
-;;
-;;; ...Unless it is borrowed.
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok [] [[(i (~ int))]] [] [(i a [])] [i] i ty ℑ £)
-;;  (ty ℑ £))
-;; (term ()))
-;;
-;;; Test a simple, well-typed struct expression: `A { i }`
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok ,test-srs [[(i int)]] [] [] [i] (struct A [] [i]) ty ℑ £)
-;;  (ty ℑ £))
-;; (term [((struct A []) [] [])]))
-;;
-;;; Like previous, but with an invalid type for the field.
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok ,test-srs [[(i (~ int))]] [] [] [i] (struct A [] [i]) ty ℑ £)
-;;  (ty ℑ £))
-;; (term ()))
-;;
-;;; Like previous, but with an uninitialized `i`
-;;(test-equal
-;; (judgment-holds
-;;  (rv-ok ,test-srs [[(i int)]] [] [] [] (struct A [] [i]) ty ℑ £)
-;;  (ty ℑ £))
-;; (term []))
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; rv-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (rv-ok I   I I I  I I I  O  O O)
+  #:contract (rv-ok srs T Λ VL £ Δ rv ty £ Δ)
+
+  ;; lv
+  [(use-lv-ok srs T Λ £ Δ lv ty_out Δ_out)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ lv ty_out £ Δ_out)]
+
+  ;; & ℓ imm lv
+  [(where ty (lvtype srs T lv))
+   (can-read-from srs T Λ Δ (mut-loans £) lv)
+   (path-freezable-for srs T Λ ℓ lv)
+   (path-outlives srs T Λ VL ℓ lv)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (& ℓ imm lv) (& ℓ imm ty) Δ (∪ £ [ℓ imm lv]))]
+
+  ;; & ℓ mut lv
+  [(where ty (lvtype srs T lv))
+   (can-write-to srs T Λ Δ (mut-loans £) lv)
+   (path-unique-for srs T Λ ℓ lv)
+   (path-outlives srs T Λ VL ℓ lv)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (& ℓ mut lv) (& ℓ mut ty) Δ (∪ £ [ℓ mut lv]))]
+
+  ;; struct s ℓs [lv ...]
+  [(where [ty_f ...] (field-tys srs s [ℓ ...]))
+   (use-lvs-ok srs T Λ £ Δ [lv ...] [ty_a ...] Δ_a)
+   (lifetime-in-scope Λ ℓ) ...
+   (subtype Λ ty_a ty_f) ...
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (struct s [ℓ ...] [lv ...]) (struct s [ℓ ...]) £ Δ_a)]
+
+  ;; int
+  [--------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ number int £ Δ)]
+
+  ;; lv + lv
+  [(use-lvs-ok srs T Λ £ Δ [lv_1 lv_2] [int int] Δ)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (lv_1 + lv_2) int Δ £)]
+
+  ;; (Some lv)
+  [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (Some lv) (Option ty) £ Δ_1)]
+
+  ;; (None ty)
+  [;; check ty well-formed
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (None ty) (Option ty) £ Δ)]
+
+  ;; (vec ty lv ...)
+  [;; check ty well-formed
+   (where l (size [lv ...]))
+   (use-lvs-ok srs T Λ £ Δ [lv ...] [ty_lv ...] Δ_1)
+   (subtype Λ ty_lv ty) ...
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (vec ty lv ...) (vec ty l) £ Δ_1)]
+
+  ;; (vec-len lv ...)
+  [(where (& ℓ imm (vec ty olen)) (lvtype srs T lv))
+   (can-read-from srs T Λ £ Δ lv)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (vec-len lv) int £ Δ)]
+
+  ;; (pack lv ty)
+  [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (pack lv ty) ty £ Δ_1)]
+
+  )
+
+; Referencing a ~ pointer is a move
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [] owned-B ty £ Δ)
+  (ty £ Δ))
+ (term [((~ (struct B [static])) [] [owned-B])]))
+
+; And illegal if it is borrowed.
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [(a imm owned-B)] [] owned-B ty £ Δ)
+  (ty £ Δ))
+ (term []))
+
+; Test a simple, well-typed struct expression: `A { i }`
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [] (struct A [] [i]) ty £ Δ)
+  (ty £ Δ))
+ (term [((struct A []) [] [])]))
+
+; Like previous, but with an invalid type for the field.
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [] (struct A [] [r-imm-B]) ty £ Δ)
+  (ty £ Δ))
+ (term []))
+
+; Like previous, but with uninitialized i
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [i] (struct A [] [i]) ty £ Δ)
+  (ty £ Δ))
+ (term []))
+
+; Struct B<'a> { i r-mut-int } -- consumes the r-mut-int
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (struct B [a] [i r-mut-int]) ty £ Δ)
+  (ty £ Δ))
+ (term [( (struct B [a]) [] [r-mut-int] )]))
+
+; Struct B<'b> { i r-mut-int } -- same as previous
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (struct B [b] [i r-mut-int]) ty £ Δ)
+  (ty £ Δ))
+ (term [( (struct B [b]) [] [r-mut-int] )]))
+
+; Struct B<'static> { i r-mut-int } -- lifetime error, 'static > 'a
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (struct B [static] [i r-mut-int]) ty £ Δ)
+  (ty £ Δ))
+ (term []))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; st-ok
 ;;
