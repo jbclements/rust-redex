@@ -35,7 +35,8 @@
   [sts (st ...)]
   (st (lv = rv)
       (lv := rv)
-      (free lv)                    ;; drop all memory owned by `lv`
+      (free lv)                    ;; shallow free
+      (drop lv)                    ;; deep free
       (call g ℓs lvs)
       (match lv (Some mode x => bk) (None => bk))
       bk)
@@ -995,9 +996,9 @@
             ,(sub1 (term z)))])
 
 (define-metafunction Patina-machine
-  lvdeinit : srs H V T lv -> H
+  deinit-lv : srs H V T lv -> H
 
-  [(lvdeinit srs H V T lv)
+  [(deinit-lv srs H V T lv)
    (deinit H α z)
    (where ty (lvtype srs T lv))
    (where α (lvaddr srs H V T lv))
@@ -1636,7 +1637,7 @@
                             (rveval ,test-srs
                                     ;; clear out the initial value of intsp,
                                     ;; then put it back
-                                    (lvdeinit ,test-srs ,test-H ,test-V ,test-T
+                                    (deinit-lv ,test-srs ,test-H ,test-V ,test-T
                                               intsp)
                                     ,test-V
                                     ,test-T
@@ -1687,132 +1688,132 @@
             (term ((ptr 22) (int 3))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; free -- frees the memory owned by `α` which has type `ty`
+;; drop-contents -- drops the memory owned by `α` which has type `ty`
 ;;
 ;; Note that this does *not* free (or deinitialize) `α` itself!
 
 (define-metafunction Patina-machine
-  free-at-offsets : srs H α (ty ...) (z ...) -> H
+  drop-contents-at-offsets : srs H α (ty ...) (z ...) -> H
 
-  [(free-at-offsets srs H α () ())
+  [(drop-contents-at-offsets srs H α () ())
    H]
 
-  [(free-at-offsets srs H α (ty_0 ty_1 ...) (z_0 z_1 ...))
-   (free-at-offsets srs H_1 α (ty_1 ...) (z_1 ...))
-   (where H_1 (free srs H ty_0 (offset α z_0)))]
+  [(drop-contents-at-offsets srs H α (ty_0 ty_1 ...) (z_0 z_1 ...))
+   (drop-contents-at-offsets srs H_1 α (ty_1 ...) (z_1 ...))
+   (where H_1 (drop-contents srs H ty_0 (offset α z_0)))]
   
   )
 
 (define-metafunction Patina-machine
-  free-vec : srs H α ty l -> H
+  drop-contents-vec : srs H α ty l -> H
 
-  [(free-vec srs H α ty l)
-   (free-at-offsets srs H α
+  [(drop-contents-vec srs H α ty l)
+   (drop-contents-at-offsets srs H α
                     (vec-tys srs ty l)
                     (vec-offsets srs ty l))]
 
   )
 
 (define-metafunction Patina-machine
-  free-dst : srs H ty α hv -> H
+  drop-contents-dst : srs H ty α hv -> H
 
-  [(free-dst srs H (vec ty erased) α (int z))
-   (free-vec srs H α ty z)]
+  [(drop-contents-dst srs H (vec ty erased) α (int z))
+   (drop-contents-vec srs H α ty z)]
 
-  [(free-dst srs H (struct s ℓs) α)
-   (free-dst srs H_1 ty_z (offset α z_z) hv)
+  [(drop-contents-dst srs H (struct s ℓs) α)
+   (drop-contents-dst srs H_1 ty_z (offset α z_z) hv)
    (where (ty_a ... ty_z) (field-tys srs s ℓs))
    (where (z_a ... z_z) (field-offsets srs s ℓs))
-   (where H_1 (free-at-offsets srs H α (ty_a ...) (z_a ...)))]
+   (where H_1 (drop-contents-at-offsets srs H α (ty_a ...) (z_a ...)))]
 
   )
 
 (define-metafunction Patina-machine
-  free : srs H ty α -> H
+  drop-contents : srs H ty α -> H
 
-  [(free srs H ty α)
+  [(drop-contents srs H ty α)
    H
    (side-condition (term (is-void (deref H α))))]
   
-  [(free srs H int α)
+  [(drop-contents srs H int α)
    H]
 
-  [(free srs H (vec ty z) α)
-   (free-vec srs H α ty z)]
+  [(drop-contents srs H (vec ty z) α)
+   (drop-contents-vec srs H α ty z)]
 
-  [(free srs H (& ℓ mq ty) α) H]
+  [(drop-contents srs H (& ℓ mq ty) α) H]
 
-  [(free srs H (~ ty) α)
+  [(drop-contents srs H (~ ty) α)
    H_2
    (where (ptr β) (deref H α))
    (where z (sizeof srs ty))
-   (where H_1 (free srs H ty β))
+   (where H_1 (drop-contents srs H ty β))
    (where H_2 (shrink H_1 β z))
    (side-condition (not (term (is-DST srs ty))))]
 
-  [(free srs H (~ ty) α_0)
+  [(drop-contents srs H (~ ty) α_0)
    H_2
    (where (ptr β) (deref H α))
    (where hv (deref H (inc α)))
    (where z (sizeof-dst srs ty hv))
-   (where H_1 (free-dst srs H ty β hv))
+   (where H_1 (drop-contents-dst srs H ty β hv))
    (where H_2 (shrink H_1 β z))
    (side-condition (term (is-DST srs ty)))]
 
-  [(free srs H (struct s ℓs) α)
-   (free-at-offsets srs H α tys zs)
+  [(drop-contents srs H (struct s ℓs) α)
+   (drop-contents-at-offsets srs H α tys zs)
    (where tys (field-tys srs s ℓs))
    (where zs (field-offsets srs s ℓs))]
 
-  [(free srs H (Option ty) α)
+  [(drop-contents srs H (Option ty) α)
    H
    (where (int 0) (deref H α))]
 
-  [(free srs H (Option ty) α)
-   (free srs H ty ,(add1 (term α)))
+  [(drop-contents srs H (Option ty) α)
+   (drop-contents srs H ty ,(add1 (term α)))
    (where (int 1) (deref H α))]
 )
 
 (define-metafunction Patina-machine
-  lvfree : srs H V T lv -> H
+  drop-lv : srs H V T lv -> H
 
-  [(lvfree srs H V T lv)
-   (free srs H ty α)
+  [(drop-lv srs H V T lv)
+   (drop-contents srs H ty α)
    (where ty (lvtype srs T lv))
    (where α (lvaddr srs H V T lv))])
 
-(test-equal (term (lvfree ,test-srs ,test-H ,test-V ,test-T p))
+(test-equal (term (drop-lv ,test-srs ,test-H ,test-V ,test-T p))
             (term (shrink ,test-H 99 1)))
 
-(test-equal (term (lvdeinit ,test-srs
-                            (lvfree ,test-srs ,test-H ,test-V ,test-T p)
+(test-equal (term (deinit-lv ,test-srs
+                            (drop-lv ,test-srs ,test-H ,test-V ,test-T p)
                             ,test-V
                             ,test-T
                             p))
             (term (deinit (shrink ,test-H 99 1) 11 1)))
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; free-variables -- free variables upon exit from a block,
+;; drop-variables -- drops variables upon exit from a block,
 ;; also removes memory used by those variables
 
 (define-metafunction Patina-machine
-  free-variables : srs H vmap vdecls -> H
+  drop-variables : srs H vmap vdecls -> H
 
-  [(free-variables srs H () ()) H]
-  [(free-variables srs
+  [(drop-variables srs H () ()) H]
+  [(drop-variables srs
                    H
                    ((x_0 α_0) (x_1 α_1) ...)
                    ((x_0 ty_0) (x_1 ty_1) ...))
-   (shrink (free srs H_1 ty_0 α_0) α_0 z)
+   (shrink (drop-contents srs H_1 ty_0 α_0) α_0 z)
    (where z (sizeof srs ty_0))
-   (where H_1 (free-variables srs
+   (where H_1 (drop-variables srs
                               H
                               ((x_1 α_1) ...)
                               ((x_1 ty_1) ...)))])
 
-;; this should free up all memory but that which pertains to `i` and `p`,
+;; this should release all memory but that which pertains to `i` and `p`,
 ;; as well as `97` and `98` which are marked as 'static'
-(test-equal (term (free-variables ,test-srs
+(test-equal (term (drop-variables ,test-srs
                                   ,test-H
                                   ,(cadr test-V)
                                   ,(cadr test-T)))
@@ -1840,7 +1841,7 @@
            ((x_2 ty_2) ...)
            H_2) (alloc-variables srs H_1 ((x_1 ty_1) ...)))])
 
-;; this should free up all memory but that which pertains to `i` and `p`,
+;; this should release all memory but that which pertains to `i` and `p`,
 ;; as well as `97` and `98` which are marked as 'static'
 (test-equal (term (alloc-variables ,test-srs
                                    ,test-H
@@ -1892,11 +1893,11 @@
   (reduction-relation
    Patina-machine
    
-   ;; Stack frame with no more statements. Free variables.
+   ;; Stack frame with no more statements. Drop variables.
    [--> ((srs fns) H [vmap_0 vmap_1 ...] [vdecls_0 vdecls_1 ...]
          [(ℓ ()) sf_1 ...])
         ((srs fns) H_1 [vmap_1 ...] [vdecls_1 ...] [sf_1 ...])
-        (where H_1 (free-variables srs H vmap_0 vdecls_0))]
+        (where H_1 (drop-variables srs H vmap_0 vdecls_0))]
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
    ;; but not initialized.
@@ -1905,11 +1906,11 @@
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
 
-   ;; Frees. The memory for the lvalue should be fully initialized.
-   [--> ((srs fns) H V T [(ℓ ((free lv) st ...)) sf ...])
+   ;; Drops. The memory for the lvalue should be fully initialized.
+   [--> ((srs fns) H V T [(ℓ ((drop lv) st ...)) sf ...])
         ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
-        (where H_1 (lvfree srs H V T lv))
-        (where H_2 (lvdeinit srs H_1 V T lv))]
+        (where H_1 (drop-lv srs H V T lv))
+        (where H_2 (deinit-lv srs H_1 V T lv))]
 
    ;; Match, None case.
    [--> ((srs fns) H V T [(ℓ [st_a st ...]) sf ...])
