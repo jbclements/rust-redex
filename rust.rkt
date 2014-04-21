@@ -255,7 +255,9 @@
                      (s = (struct List [] (i n)))
                      (l = (new s))
                      (p = (& l0 imm (* l)))
-                     (call sum_list [l0 a] [p outp])]))))
+                     (call sum_list [l0 a] [p outp])
+                     (drop l)
+                     ]))))
 (check-not-false (redex-match Patina-machine fn sum-main))
 
 ;; fn sum_list(inp: &List, outp: &mut int) {
@@ -758,19 +760,6 @@
                            3))
             (term [(10 (ptr 1))
                    (14 (ptr 5))]))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; is-void -- test for void
-
-(define-metafunction Patina-machine
-  is-void : hv -> boolean
-
-  [(is-void void) #t]
-  [(is-void (ptr α)) #f]
-  [(is-void (int number)) #f])
-
-(test-equal (term (is-void (ptr 2))) #f)
-(test-equal (term (is-void void)) #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; subst-ℓ
@@ -1782,10 +1771,6 @@
 (define-metafunction Patina-machine
   drop-contents : srs H ty α -> H
 
-  [(drop-contents srs H ty α)
-   H
-   (side-condition (term (is-void (deref H α))))]
-  
   [(drop-contents srs H int α)
    H]
 
@@ -1870,37 +1855,6 @@
             (term ((99 (int 33)))))
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; drop-variables -- drops variables upon exit from a block,
-;; also removes memory used by those variables
-
-(define-metafunction Patina-machine
-  drop-variables : srs H vmap vdecls -> H
-
-  [(drop-variables srs H () ()) H]
-  [(drop-variables srs
-                   H
-                   ((x_0 α_0) (x_1 α_1) ...)
-                   ((x_0 ty_0) (x_1 ty_1) ...))
-   (shrink (drop-contents srs H_1 ty_0 α_0) α_0 z)
-   (where z (sizeof srs ty_0))
-   (where H_1 (drop-variables srs
-                              H
-                              ((x_1 α_1) ...)
-                              ((x_1 ty_1) ...)))])
-
-;; this should release all memory but that which pertains to `i` and `p`,
-;; as well as `97` and `98` which are marked as 'static'
-(test-equal (term (drop-variables ,test-srs
-                                  ,test-H
-                                  ,(cadr test-V)
-                                  ,(cadr test-T)))
-            (term ((10 (int 22))
-                   (11 (ptr 99))
-                   (97 (int 29))
-                   (98 (int 28))
-                   (99 (int 27)))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; alloc-variables -- allocate space for variables upon entry to a block,
 ;; filling the memory with void
 
@@ -1970,11 +1924,11 @@
   (reduction-relation
    Patina-machine
    
-   ;; Stack frame with no more statements. Drop variables.
+   ;; Stack frame with no more statements. Free variables.
    [--> ((srs fns) H [vmap_0 vmap_1 ...] [vdecls_0 vdecls_1 ...]
          [(ℓ ()) sf_1 ...])
         ((srs fns) H_1 [vmap_1 ...] [vdecls_1 ...] [sf_1 ...])
-        (where H_1 (drop-variables srs H vmap_0 vdecls_0))]
+        (where H_1 (free-variables srs H vmap_0 vdecls_0))]
 
    ;; Assignments. The memory for the lvalue should always be alloc'd,
    ;; but not initialized.
@@ -1983,7 +1937,7 @@
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
 
-   ;; Frees. lv should be a pointer.
+   ;; Frees. lv should be a pointer whose contents have been freed.
    [--> ((srs fns) H V T [(ℓ ((free lv) st ...)) sf ...])
         ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
         (where H_1 (free-pointer srs H V T lv))]
