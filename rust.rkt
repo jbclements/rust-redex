@@ -3680,6 +3680,11 @@
    --------------------------------------------------
    (rv-ok srs T Λ VL £ Δ (lv_1 + lv_2) int £ Δ)]
 
+  ;; (new lv)
+  [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
+   --------------------------------------------------
+   (rv-ok srs T Λ VL £ Δ (new lv) (~ ty) £ Δ_1)]
+
   ;; (Some lv)
   [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
    --------------------------------------------------
@@ -3791,6 +3796,11 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (lv := rv) £_rv Δ_rv)]
 
+  [(where (~ ty) (lvtype srs T lv))
+   (lv-dropped-if-necessary srs T Δ (* lv))
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ VL £ Δ (free lv) £ (∪ Δ [lv]))]
+
   [(use-lv-ok srs T Λ £ Δ lv ty Δ_1)
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (drop lv) £ Δ_1)]
@@ -3836,6 +3846,50 @@
          (r-mut-int = (& a mut i)) £ Δ)
   (£ Δ))
  (term [([(a mut i)] [])]))
+
+;; test freeing owned-B; since contents do not need drop, should be legal
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (free owned-B) £ Δ)
+  (£ Δ))
+ (term [([] [owned-B])]))
+
+;; test dropping owned-B
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (drop owned-B) £ Δ)
+  (£ Δ))
+ (term [([] [owned-B])]))
+
+;; test freeing owned-E with and without having dropped contents first
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [((* owned-E) · 0)]
+         (free owned-E) £ Δ)
+  (£ Δ))
+ (term [(() [((* owned-E) · 0) owned-E])]))
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (free owned-E) £ Δ)
+  (£ Δ))
+ (term []))
+
+;; test dropping owned-E when fully/partially initialized
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (drop owned-E) £ Δ)
+  (£ Δ))
+ (term [([] [owned-E])]))
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [((* owned-E) · 1)]
+         (drop owned-E) £ Δ)
+  (£ Δ))
+ (term []))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; bk-ok
