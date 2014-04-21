@@ -2419,36 +2419,36 @@
  (term (* r)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; path-and-base-paths lv
+;; prefix-paths lv
 ;;
 ;; Given something like (*x).f, yields: [(*x).f, *x, x]
 
 (define-metafunction Patina-typing
-  path-and-base-paths : lv -> lvs
+  prefix-paths : lv -> lvs
 
-  [(path-and-base-paths x)
+  [(prefix-paths x)
    [x]
    ]
 
-  [(path-and-base-paths (lv · f))
+  [(prefix-paths (lv · f))
    [(lv · f) lv_1 ...]
-   (where [lv_1 ...] (path-and-base-paths lv))
+   (where [lv_1 ...] (prefix-paths lv))
    ]
 
-  [(path-and-base-paths (lv_b @ lv_i))
+  [(prefix-paths (lv_b @ lv_i))
    [(lv_b @ lv_i) lv_1 ...]
-   (where [lv_1 ...] (path-and-base-paths lv))
+   (where [lv_1 ...] (prefix-paths lv))
    ]
 
-  [(path-and-base-paths (* lv))
+  [(prefix-paths (* lv))
    [(* lv) lv_1 ...]
-   (where [lv_1 ...] (path-and-base-paths lv))
+   (where [lv_1 ...] (prefix-paths lv))
    ]
 
   )
 
 (test-equal
- (term (path-and-base-paths (* (b · 1))))
+ (term (prefix-paths (* (b · 1))))
  (term [(* (b · 1)) (b · 1) b]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2483,8 +2483,8 @@
   paths-intersect : lv lv -> boolean
 
   [(paths-intersect lv_1 lv_2)
-   (∨ (∈ lv_1 (path-and-base-paths lv_2))
-      (∈ lv_2 (path-and-base-paths lv_1)))]
+   (∨ (∈ lv_1 (prefix-paths lv_2))
+      (∈ lv_2 (prefix-paths lv_1)))]
   )
 
 (test-equal
@@ -2499,6 +2499,39 @@
  (term (paths-intersect x (x · 0)))
  #t)
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; path-is-prefix-of lv_1 lv_2
+;;
+;; x is a prefix of x, x.y, and *x. Got it?
+
+(define-metafunction Patina-typing
+  path-is-prefix-of : lv lv -> boolean
+
+  [(path-is-prefix-of lv_1 lv_2)
+   (∈ lv_1 (prefix-paths lv_2))]
+  )
+
+(test-equal
+ (term (path-is-prefix-of (x · 0) (x · 1)))
+ #f)
+
+(test-equal
+ (term (path-is-prefix-of (x · 0) x))
+ #f)
+
+(test-equal
+ (term (path-is-prefix-of x x))
+ #t)
+
+(test-equal
+ (term (path-is-prefix-of x (* x)))
+ #t)
+
+(test-equal
+ (term (path-is-prefix-of x (x · 1)))
+ #t)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lv-partially-initialized
 ;;
@@ -2509,7 +2542,7 @@
 
   [(lv-partially-initialized Δ lv)
    (∄ [(∈ lv_b Δ) ...])
-   (where [lv_b ...] (path-and-base-paths lv))]
+   (where [lv_b ...] (prefix-paths lv))]
   )
 
 (test-equal
@@ -2563,6 +2596,31 @@
 (test-equal
  (term (lv-fully-initialized [p] (* p)))
  #f)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; initialize-lv Δ lv
+;;
+;; Returns a modified Δ in which lv is initialized
+
+(define-metafunction Patina-typing
+  initialize-lv : Δ lv -> Δ
+
+  [(initialize-lv Δ lv)
+   ,(filter (lambda (δ) (term (¬ (path-is-prefix-of lv ,δ)))) (term Δ))]
+
+  )
+
+(test-equal
+ (term (initialize-lv [((* p) · 1)] p))
+ (term []))
+
+(test-equal
+ (term (initialize-lv [((* p) · 1)] (* p)))
+ (term []))
+
+(test-equal
+ (term (initialize-lv [((* p) · 1)] ((* p) · 2)))
+ (term [((* p) · 1)]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; lifetime-in-scope Λ ℓ
@@ -2989,7 +3047,7 @@
    ;;
    ;;    let x = &mut a;
    ;;    let y = a.b;        // would read part of a
-   (where [lv_b ...] (path-and-base-paths lv))
+   (where [lv_b ...] (prefix-paths lv))
    (unencumbered £_l lv_b) ...
    --------------------------------------------------
    (can-access srs T Λ £_l Δ lv)]
@@ -3644,36 +3702,57 @@
   (ty £ Δ))
  (term []))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;; st-ok
-;;
-;;(define-judgment-form
-;;  Patina-typing
-;;  #:mode     (st-ok I    I I I I I  O O)
-;;  #:contract (st-ok prog T Λ £ ℑ st ℑ £)
-;;
-;;  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
-;;   (can-init srs T Λ ℑ_rv lv)
-;;   (subtype Λ ty_rv (lvtype srs T lv))
-;;   --------------------------------------------------
-;;   (st-ok (srs fns) T Λ £ ℑ (lv = rv) £_rv (∪ ℑ_rv [lv]))]
-;;
-;;  [(rv-ok srs T Λ £ ℑ rv ty_rv £_rv ℑ_rv)
-;;   (can-write-to srs T Λ £_rv ℑ_rv lv)
-;;   (subtype Λ ty_rv (lvtype srs T lv))
-;;   --------------------------------------------------
-;;   (st-ok (srs fns) T Λ £ ℑ (lv := rv) £_rv ℑ_rv)]
-;;
-;;  [(use-lvs-ok srs T Λ £ ℑ [lv] [ty] ℑ_1)
-;;   --------------------------------------------------
-;;   (st-ok (srs fns) T Λ £ ℑ (free lv) £ ℑ_1)]
-;;
-;;;;   [(bk-ok prog T_1 Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)
-;;;;    --------------------------------------------------
-;;;;    (st-ok prog T Λ ℜ ℑ (block ℓ vdecls sts) ℑ_1 ℜ_1)]
-;;
-;;  )
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; st-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (st-ok I    I I I  I I I  O O)
+  #:contract (st-ok prog T Λ VL £ Δ st £ Δ)
+
+  [(rv-ok srs T Λ VL £ Δ rv ty_rv £_rv Δ_rv)
+   (can-init srs T Λ Δ_rv lv)
+   (subtype Λ ty_rv (lvtype srs T lv))
+   (where Δ_lv (initialize-lv Δ_rv lv))
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ VL £ Δ (lv = rv) £_rv Δ_lv)]
+
+  [(rv-ok srs T Λ VL £ Δ rv ty_rv £_rv Δ_rv)
+   (can-write-to srs T Λ £_rv Δ_rv lv)
+   (subtype Λ ty_rv (lvtype srs T lv))
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ VL £ Δ (lv := rv) £_rv Δ_rv)]
+
+  [(use-lvs-ok srs T Λ £ Δ [lv] [ty] Δ_1)
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ VL £ Δ (free lv) £ Δ_1)]
+
+  )
+
+;; test initializing an uninitialized i with a constant
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [i]
+         (i = 3) £ Δ)
+  (£ Δ))
+ (term [([] [])]))
+
+;; can only initialize if uninitialized
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (i = 3) £ Δ)
+  (£ Δ))
+ (term []))
+
+;; test overwriting i with a new value
+(test-equal
+ (judgment-holds
+  (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (i := 3) £ Δ)
+  (£ Δ))
+ (term [([] [])]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;; bk-ok
 ;;;; 
