@@ -4027,3 +4027,43 @@
          £ Δ)
   (£ Δ))
  (term []))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; fn-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (fn-ok I    I )
+  #:contract (fn-ok prog fn)
+
+  [;; check the block with an initial environment that assumes
+   ;; parameters are initialized and not borrowed
+   (where (block ℓ_bk vdecls_bk sts_bk) bk)
+   (where T  [[(x ty) ...]])
+   (where Λ  [(ℓ []) ...])    ;; FIXME - establish initial relations between lifetimes
+   (where VL [[x ℓ_bk] ...])
+   (bk-ok (srs fns) T Λ VL [] [] bk £ Δ)
+
+   ;; all parameters must be dropped
+   (lv-dropped-if-necessary srs T Δ x) ...
+   --------------------------------------------------
+   (fn-ok (srs fns) (fun g [ℓ ...] [(x ty) ...] bk))]
+  )
+
+(test-equal
+ (judgment-holds (fn-ok ,sum-prog ,sum-main))
+ #t)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; prog-ok
+
+(define-judgment-form
+  Patina-typing
+  #:mode     (prog-ok I   )
+  #:contract (prog-ok prog)
+
+  [(where (srs [fn ...]) prog)
+   (fn-ok prog fn) ...
+   --------------------------------------------------
+   (prog-ok prog)]
+  )
