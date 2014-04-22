@@ -240,26 +240,29 @@
 
 (define sum-main
   (term (fun main [a] [(outp (& a mut int))]
-             (block l0 [(i int)
-                        (n (Option (~ (struct List []))))
-                        (s (struct List []))
-                        (l (~ (struct List [])))
-                        (p (& l0 imm (struct List [])))]
+             (block l0
+                    [(i int)
+                     (n (Option (~ (struct List []))))
+                     (s (struct List []))
+                     (l (~ (struct List [])))]
                     [(i = 22)
                      (n = (None (~ (struct List []))))
                      (s = (struct List [] (i n)))
                      (l = (new s))
-                     (i = 44)
+                     (i := 44)
                      (n = (Some l))
                      (s = (struct List [] (i n)))
                      (l = (new s))
-                     (p = (& l0 imm (* l)))
-                     (call sum-list [l0 a] [p outp])
+                     (block l1
+                            [(p (& l1 imm (struct List [])))]
+                            [(p = (& l1 imm (* l)))
+                             (call sum-list [l1 a] [p outp])
+                             ])
                      (drop l)
                      ]))))
 (check-not-false (redex-match Patina-machine fn sum-main))
 
-;; fn sum-list(inp: &List, outp: &mut int) {
+;; fn sum-list<'a,'b>(inp: &'a List, outp: &'b mut int) {
 ;;     let r: int = inp.0;
 ;;     match inp.1 {
 ;;         Some(ref next1) => { // next1: &~List
@@ -983,41 +986,6 @@
             (term 3))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; deinit -- deinitializes a block of memory
-
-(define-metafunction Patina-machine
-  deinit : H α z -> H
-  
-  [(deinit H α 0) H]
-
-  [(deinit H α z)
-   (deinit (update H α void)
-            ,(add1 (term α))
-            ,(sub1 (term z)))])
-
-(define-metafunction Patina-machine
-  deinit-lv : srs H V T lv -> H
-
-  [(deinit-lv srs H V T lv)
-   (deinit H α z)
-   (where ty (lvtype srs T lv))
-   (where α (lvaddr srs H V T lv))
-   (where z (sizeof srs ty))])
-
-(test-equal (term (deinit [(10 (ptr 1))
-                           (11 (int 2))
-                           (12 (ptr 3))
-                           (13 (ptr 4))
-                           (14 (ptr 5))]
-                           11
-                           3))
-            (term [(10 (ptr 1))
-                   (11 void)
-                   (12 void)
-                   (13 void)
-                   (14 (ptr 5))]))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; memcopy -- copies memory from one address to another
 
 (define-metafunction Patina-machine
@@ -1593,10 +1561,8 @@
 ;; test pack
 (test-equal (term (lvselect ,test-srs
                             (rveval ,test-srs
-                                    ;; clear out the initial value of intsp,
-                                    ;; then put it back
-                                    (deinit-lv ,test-srs ,test-H ,test-V ,test-T
-                                              intsp)
+                                    ;; regenerate the value of intsp
+                                    ,test-H
                                     ,test-V
                                     ,test-T
                                     (vaddr ,test-V intsp)
@@ -1780,22 +1746,15 @@
 )
 
 (define-metafunction Patina-machine
-  drop-lv : srs H V T lv -> H
+  drop-lv-contents : srs H V T lv -> H
 
-  [(drop-lv srs H V T lv)
+  [(drop-lv-contents srs H V T lv)
    (drop-contents srs H ty α)
    (where ty (lvtype srs T lv))
    (where α (lvaddr srs H V T lv))])
 
-(test-equal (term (drop-lv ,test-srs ,test-H ,test-V ,test-T p))
+(test-equal (term (drop-lv-contents ,test-srs ,test-H ,test-V ,test-T p))
             (term (shrink ,test-H 99 1)))
-
-(test-equal (term (deinit-lv ,test-srs
-                            (drop-lv ,test-srs ,test-H ,test-V ,test-T p)
-                            ,test-V
-                            ,test-T
-                            p))
-            (term (deinit (shrink ,test-H 99 1) 11 1)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; free-variables -- pop the stack frame for a block; i.e., shallowly remove the
@@ -1905,6 +1864,14 @@
         (where α (lvaddr srs H V T lv))
         (where H_1 (rveval srs H V T α rv))]
 
+   ;; Overwrites. The memory for the lvalue should always be fully initialized.
+   ;; Previous contents will be dropped.
+   [--> ((srs fns) H V T [(ℓ ((lv := rv) st ...)) sf ...])
+        ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
+        (where α (lvaddr srs H V T lv))
+        (where H_1 (drop-lv-contents srs H V T lv))
+        (where H_2 (rveval srs H_1 V T α rv))]
+
    ;; Frees. lv should be a pointer whose contents have been freed.
    [--> ((srs fns) H V T [(ℓ ((free lv) st ...)) sf ...])
         ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
@@ -1912,9 +1879,8 @@
 
    ;; Drops. The memory for the lvalue should be fully initialized.
    [--> ((srs fns) H V T [(ℓ ((drop lv) st ...)) sf ...])
-        ((srs fns) H_2 V T [(ℓ (st ...)) sf ...])
-        (where H_1 (drop-lv srs H V T lv))
-        (where H_2 (deinit-lv srs H_1 V T lv))]
+        ((srs fns) H_1 V T [(ℓ (st ...)) sf ...])
+        (where H_1 (drop-lv-contents srs H V T lv))]
 
    ;; Match, None case.
    [--> ((srs fns) H V T [(ℓ [st_a st ...]) sf ...])
@@ -4216,27 +4182,7 @@
 
 (test-equal
  (judgment-holds (fn-ok ,sum-prog
-                        (fun main [a] [(outp (& a mut int))]
-                             (block l0
-                                    [(i int)
-                                     (n (Option (~ (struct List []))))
-                                     (s (struct List []))
-                                     (l (~ (struct List [])))]
-                                    [(i = 22)
-                                     (n = (None (~ (struct List []))))
-                                     (s = (struct List [] (i n)))
-                                     (l = (new s))
-                                     (i := 44)
-                                     (n = (Some l))
-                                     (s = (struct List [] (i n)))
-                                     (l = (new s))
-                                     (block l1
-                                            [(p (& l1 imm (struct List [])))]
-                                            [(p = (& l1 imm (* l)))
-                                             (call sum-list [l1 a] [p outp])
-                                             ])
-                                     (drop l)
-                                     ]))))
+                        ,sum-main))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
