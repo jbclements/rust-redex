@@ -254,12 +254,12 @@
                      (s = (struct List [] (i n)))
                      (l = (new s))
                      (p = (& l0 imm (* l)))
-                     (call sum_list [l0 a] [p outp])
+                     (call sum-list [l0 a] [p outp])
                      (drop l)
                      ]))))
 (check-not-false (redex-match Patina-machine fn sum-main))
 
-;; fn sum_list(inp: &List, outp: &mut int) {
+;; fn sum-list(inp: &List, outp: &mut int) {
 ;;     let r: int = inp.0;
 ;;     match inp.1 {
 ;;         Some(ref next1) => { // next1: &~List
@@ -267,7 +267,7 @@
 ;;             let b = 0;
 ;;             {
 ;;                 let c = &mut b;
-;;                 sum_list(next2, c);
+;;                 sum-list(next2, c);
 ;;             }
 ;;             *outp = r + b;
 ;;         }
@@ -276,8 +276,8 @@
 ;;         }
 ;;     }
 ;; }
-(define sum-sum_list
-  (term (fun sum_list [a b] [(inp (& a imm (struct List [])))
+(define sum-sum-list
+  (term (fun sum-list [a b] [(inp (& a imm (struct List [])))
                              (outp (& b mut int))]
              (block l0
                     [(r int)]
@@ -290,15 +290,15 @@
                                      (b = 0)
                                      (block l2 [(c (& l1 mut int))]
                                             [(c = (& l2 mut b))
-                                             (call sum_list [l1 l2] [next2 c])
+                                             (call sum-list [l1 l2] [next2 c])
                                              ((* outp) = (r + b))])]))
                        (None =>
                              (block l2 []
                                     [((* outp) = r)])))]))))
-(check-not-false (redex-match Patina-machine fn sum-sum_list))
+(check-not-false (redex-match Patina-machine fn sum-sum-list))
 
 (define sum-fns
-  (term (,sum-main ,sum-sum_list)))
+  (term (,sum-main ,sum-sum-list)))
 
 (define sum-prog
   (term (,sum-srs ,sum-fns)))
@@ -4215,7 +4215,28 @@
  #t)
 
 (test-equal
- (judgment-holds (fn-ok ,sum-prog ,sum-main))
+ (judgment-holds (fn-ok ,sum-prog
+                        (fun main [a] [(outp (& a mut int))]
+                             (block l0
+                                    [(i int)
+                                     (n (Option (~ (struct List []))))
+                                     (s (struct List []))
+                                     (l (~ (struct List [])))]
+                                    [(i = 22)
+                                     (n = (None (~ (struct List []))))
+                                     (s = (struct List [] (i n)))
+                                     (l = (new s))
+                                     (i := 44)
+                                     (n = (Some l))
+                                     (s = (struct List [] (i n)))
+                                     (l = (new s))
+                                     (block l1
+                                            [(p (& l1 imm (struct List [])))]
+                                            [(p = (& l1 imm (* l)))
+                                             (call sum-list [l1 a] [p outp])
+                                             ])
+                                     (drop l)
+                                     ]))))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
