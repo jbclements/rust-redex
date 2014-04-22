@@ -3112,6 +3112,11 @@
                                      a (* ((* r-mut-B) · 1))))
  #f)
 
+(test-equal
+ (judgment-holds (path-freezable-for ,test-srs ,test-ty-T ,test-ty-Λ
+                                     a (* owned-B)))
+ #t)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; can-access
 
@@ -3237,6 +3242,12 @@
  (judgment-holds (can-read-from ,test-srs ,test-ty-T ,test-ty-Λ
                                 [(a mut r-imm-B)] [] r-imm-B))
  #f)
+
+;; read from (* owned-B)
+(test-equal
+ (judgment-holds (can-read-from ,test-srs ,test-ty-T ,test-ty-Λ
+                                [] [] (* owned-B)))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; can-write-to
@@ -3843,6 +3854,30 @@
   (ty £ Δ))
  (term []))
 
+;; test borrowing immutably when already borrowed
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [(a imm i)] []
+         (& a imm i) ty £ Δ)
+  (ty £ Δ))
+ (term [((& a imm int) [(a imm i)] [])]))
+
+;; test borrowing of deref of owned pointer
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (& b imm (* owned-B)) ty £ Δ)
+  (ty £ Δ))
+ (term [( (& b imm (struct B (static))) [(b imm (* owned-B))] [] )]))
+
+;; test borrowing of deref of owned pointer when already borrowed
+(test-equal
+ (judgment-holds
+  (rv-ok ,test-srs ,test-ty-T ,test-ty-Λ ,test-ty-VL [(b imm (* owned-B))] []
+         (& b imm (* owned-B)) ty £ Δ)
+  (ty £ Δ))
+ (term [( (& b imm (struct B (static))) [(b imm (* owned-B))] [] )]))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; st-ok
 
@@ -4081,6 +4116,23 @@
    (fn-ok (srs fns) (fun g [ℓ ...] [(x ty) ...] bk))]
   )
 
+;; borrow same value twice immutably
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun test-fn [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              []
+                              [(block l2
+                                      [(y (& l2 imm (struct B (l0))))
+                                       (z (& l2 imm (struct B (l0))))
+                                       ]
+                                      [(y = (& l2 imm (* x)))
+                                       (z = (& l2 imm (* x)))
+                                       ])
+                               (drop x)]))))
+ #t)
+
 (test-equal
  (judgment-holds (fn-ok
                   ,test-ty-prog
@@ -4137,9 +4189,34 @@
                                ]))))
  #t)
 
-;(test-equal
-; (judgment-holds (fn-ok ,sum-prog ,sum-main))
-; #t)
+;; take and a linear subfield then try to drop
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun test-fn [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              [(y (& l0 mut int))]
+                              [(y = ((* x) · 1))
+                               (call drop-owned-B [l0] [x])
+                               ]))))
+ #f)
+
+;; take and a linear subfield, replace it, then drop
+(test-equal
+ (judgment-holds (fn-ok
+                  ,test-ty-prog
+                  (fun test-fn [l0] [(x (~ (struct B (l0))))]
+                       (block l1
+                              [(y (& l0 mut int))]
+                              [(y = ((* x) · 1))
+                               (((* x) · 1) = y)
+                               (call drop-owned-B [l0] [x])
+                               ]))))
+ #t)
+
+(test-equal
+ (judgment-holds (fn-ok ,sum-prog ,sum-main))
+ #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; prog-ok
