@@ -2134,6 +2134,7 @@
 ;;      let owned-B: ~B<'static>;
 ;;      let owned-E: ~E;
 ;;      let r-mut-int: &'a mut int
+;;      let opt-int: Option<int>
 ;;    }
 ;; }
 
@@ -2147,6 +2148,7 @@
                            (owned-B (~ (struct B (static))))
                            (owned-E (~ (struct E ())))
                            (r-mut-int (& a mut int))
+                           (opt-int (Option int))
                            ]
                           ]))
 (define test-ty-VL (term [[;; block a
@@ -2158,6 +2160,7 @@
                             (owned-B b)
                             (owned-E b)
                             (r-mut-int b)
+                            (opt-int b)
                             ]
                            ]))
 
@@ -3885,6 +3888,44 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (call g [ℓ_a ...] lvs_a) £ Δ_a)]
 
+  [(use-lv-ok srs T Λ £ Δ lv_discr ty_discr Δ_discr)
+
+   (where (block ℓ_some vdecls_some sts_some) bk_some)
+
+   ;; check the some block with x in scope
+   (where [vdecls ...] T)
+   (where [vls ...] VL)
+   (where T_some [[(x ty_discr)] vdecls ...])
+   (where VL_some [[(x ℓ_some)] vls ...])
+   (bk-ok (srs fns) T_some Λ VL_some £ Δ_discr bk_some £_some Δ_some1)
+
+   ;; check that the some block drops x if necessary
+   (lv-dropped-if-necessary srs T_some Δ_some1 x)
+
+   ;; filter out x from the list of deinitialized paths
+   ;; since it is out of scope after match
+   (where Δ_some (expire-paths [x] Δ_some1))
+
+   ;; check the none block without x in scope
+   (bk-ok (srs fns) T Λ VL £ Δ_discr bk_none £_none Δ_none)
+
+   ;; loans from both sides are still in scope
+   (where £_match (∪ £_some £_none))
+
+   ;; anything dropped on either side must be considered dropped afterwards
+   (where Δ_match (∪ Δ_some Δ_none))
+
+   ;; check that anything dropped afterwards is dropped on *both* sides
+   (where [lv_match ...] Δ_match)
+   (lv-dropped-if-necessary srs T Δ_some lv_match) ...
+   (lv-dropped-if-necessary srs T Δ_none lv_match) ...
+   --------------------------------------------------
+   (st-ok (srs fns) T Λ VL £ Δ (match
+                                 lv_discr
+                                 (Some by-value x => bk_some)
+                                 (None => bk_none))
+          £_match Δ_match)]
+
   [(bk-ok prog T Λ VL £ Δ bk £ Δ_1)
    --------------------------------------------------
    (st-ok prog T Λ VL £ Δ bk £ Δ_1)]
@@ -4059,6 +4100,39 @@
          £ Δ)
   (£ Δ))
  (term []))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Test for statements that involve blocks
+
+; test match where one side drops more than the other
+(test-equal
+ (judgment-holds
+  (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (match opt-int
+           (Some by-value x => (block l1
+                                      []
+                                      [(drop owned-B)]))
+           (None => (block l2
+                           []
+                           [])))
+         £ Δ)
+  (£ Δ))
+ (term []))
+
+;; test match where both sides drop the same
+(test-equal
+ (judgment-holds
+  (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (match opt-int
+           (Some by-value x => (block l1
+                                      []
+                                      [(drop owned-B)]))
+           (None => (block l2
+                           []
+                           [(drop owned-B)])))
+         £ Δ)
+  (£ Δ))
+ (term [([] [owned-B])]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; fn-ok
