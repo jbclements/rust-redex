@@ -478,34 +478,6 @@
   )
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; ≠ -- test if things are different
-
-(define-metafunction Patina-machine
-  ≠ : any any -> boolean
-
- [(≠ any any) #f]
- [(≠ any_0 any_1) #t]
- )
-
-(test-equal (term (≠ x x)) (term #f))
-(test-equal (term (≠ x y)) (term #t))
-(test-equal (term (≠ (~ int) (~ int))) (term #f))
-(test-equal (term (≠ (~ int) (~ (~ int)))) (term #t))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; ∩? -- a metafunction for testing whether two sets have members in common
-
-(define-metafunction Patina-machine
-  ∩? : [any ...] [any ...] -> boolean
-
-  [(∩? [any_0 ...] [any_1 ...])
-   (∃ [(∈ any_0 [any_1 ...]) ...])]
-  )
-
-(test-equal (term (∩? [1 2 4] [1 2 3])) #t)
-(test-equal (term (∩? [1 2 3] [4 5 6])) #f)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ∪ -- a metafunction for set union
 
 (define-metafunction Patina-machine
