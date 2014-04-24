@@ -22,6 +22,13 @@
 ;;         in Real Rust we have this downcast notion so we can issue a more
 ;;         targeted loan; I don't think this makes any real difference in practice,
 ;;         so long as we are limited to Option loans.
+;;
+;; FIXME - Consider just removing by-ref match and instead having an operator
+;;         to convert Option<T> to Option<&T>
+;;
+;; FIXME - check that local variables types are bounded by their lifetime
+;;
+;; FIXME - add in relationships between lifetime parameters that we can infer from types
 
 #lang racket
 
