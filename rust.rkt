@@ -11,6 +11,18 @@
 ;; and so on
 ;; lifetime-≤
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; REDEX MODEL FOR RUST
+;;
+;; Current state:
+;;
+;; FIXME - Type system rules do not handle vectors well
+;;
+;; FIXME - Type system rules for match issue a loan for entire Option but
+;;         in Real Rust we have this downcast notion so we can issue a more
+;;         targeted loan; I don't think this makes any real difference in practice,
+;;         so long as we are limited to Option loans.
+
 #lang racket
 
 (require redex
@@ -60,7 +72,7 @@
       (vec-len lv)                 ;; extract length of a vector
       (pack lv ty)                 ;; convert fixed-length to DST
       )
-  (mode (ref mq) by-value)
+  (mode (ref ℓ mq) by-value)
   ;; types : 
   (tys (ty ...))
   (ty (struct s ℓs)             ;; s<'ℓ...>
@@ -286,18 +298,21 @@
                     [(r int)]
                     [(r = ((* inp) · 0))
                      (match ((* inp) · 1)
-                       (Some (ref imm) next1 =>
-                             (block l1 [(next2 (& l1 imm (struct List [])))
-                                        (b int)]
+                       (Some (ref l0 imm) next1 =>
+                             (block l1
+                                    [(next2 (& l1 imm (struct List [])))
+                                     (b int)]
                                     [(next2 = (& l1 imm (* (* next1))))
                                      (b = 0)
-                                     (block l2 [(c (& l1 mut int))]
-                                            [(c = (& l2 mut b))
-                                             (call sum-list [l1 l2] [next2 c])
-                                             ((* outp) = (r + b))])]))
+                                     (block l3
+                                            [(c (& l3 mut int))]
+                                            [(c = (& l3 mut b))
+                                             (call sum-list [l1 l3] [next2 c])])
+                                     ((* outp) := (r + b))]))
                        (None =>
-                             (block l2 []
-                                    [((* outp) = r)])))]))))
+                             (block l1
+                                    []
+                                    [((* outp) := r)])))]))))
 (check-not-false (redex-match Patina-machine fn sum-sum-list))
 
 (define sum-fns
@@ -1816,10 +1831,10 @@
 (define-metafunction Patina-machine
   unwrap : srs H ℓ mode ty α -> (H ty α)
   
-  [(unwrap srs H ℓ (ref mq) ty α)
+  [(unwrap srs H ℓ (ref ℓ_x mq_x) ty α)
    (H_u ty_m α_m)
    ;; type of variable `x_m`
-   (where ty_m (& ℓ mq ty))
+   (where ty_m (& ℓ_x mq_x ty))
    ;; generate memory for `x_m`
    (where (H_m α_m) (malloc H (sizeof srs ty_m)))
    ;; update mem location with ptr to payload
@@ -1833,10 +1848,10 @@
    (where H_u (memcopy H_m α_m α (sizeof srs ty)))]
   )
 
-(test-equal (term (unwrap ,test-srs ,test-H l1 (ref mut) (~ int)
+(test-equal (term (unwrap ,test-srs ,test-H l1 (ref l2 mut) (~ int)
                           ,(add1 (term (vaddr ,test-V s)))))
             (term (,(append (term [(100 (ptr 21))]) test-H)
-                   (& l1 mut (~ int))
+                   (& l2 mut (~ int))
                    100)))
 
 (test-equal (term (unwrap ,test-srs ,test-H l1 by-value (~ int)
@@ -3708,8 +3723,9 @@
    (can-write-to srs T Λ £ Δ lv)
    (path-unique-for srs T Λ ℓ lv)
    (path-outlives srs T Λ VL ℓ lv)
+   (where ty_rv (& ℓ mut ty))
    --------------------------------------------------
-   (rv-ok srs T Λ VL £ Δ (& ℓ mut lv) (& ℓ mut ty) (∪ £ [(ℓ mut lv)]) Δ)]
+   (rv-ok srs T Λ VL £ Δ (& ℓ mut lv) ty_rv (∪ £ [(ℓ mut lv)]) Δ)]
 
   ;; struct s ℓs [lv ...]
   [(where [ty_f ...] (field-tys srs s [ℓ ...]))
@@ -3848,6 +3864,46 @@
  (term [( (& b imm (struct B (static))) [(b imm (* owned-B))] [] )]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; join-after-match
+;;
+;; Given the state after the some and none branch of a match, produces
+;; the final state in terms of what loans and deinitializations have
+;; occured. Checks that both states are consistent in that they have
+;; deinitialized the same paths.
+
+(define-judgment-form
+  Patina-typing
+  ;                            initial   some    none    out
+  ;                            +-----+   +---+   +---+   +-+
+  ;                            |     |   |   |   |   |   | |
+  #:mode     (join-after-match I   I I   I I I   I I I   O O)
+  #:contract (join-after-match srs T x   T £ Δ   T £ Δ   £ Δ)
+
+  [;; check that the some block drops x if necessary
+   (lv-dropped-if-necessary srs T_some Δ_some x)
+
+   ;; filter out x from the list of deinitialized paths
+   ;; since it is out of scope after match
+   (where Δ_some1 (expire-paths [x] Δ_some))
+
+   ;; loans from both sides are still in scope
+   (where £_match (∪ £_some £_none))
+
+   ;; anything dropped on either side must be considered dropped afterwards
+   (where Δ_match (∪ Δ_some1 Δ_none))
+
+   ;; check that anything dropped afterwards is dropped on *both* sides
+   (where [lv_match ...] Δ_match)
+   (lv-dropped-if-necessary srs T Δ_some1 lv_match) ...
+   (lv-dropped-if-necessary srs T Δ_none lv_match) ...
+   --------------------------------------------------
+   (join-after-match srs T x
+                     T_some £_some Δ_some
+                     T_none £_none Δ_none
+                     £_match Δ_match)
+   ])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; st-ok
 
 (define-judgment-form
@@ -3889,36 +3945,24 @@
    (st-ok (srs fns) T Λ VL £ Δ (call g [ℓ_a ...] lvs_a) £ Δ_a)]
 
   [(use-lv-ok srs T Λ £ Δ lv_discr ty_discr Δ_discr)
+   (where (Option ty_x) ty_discr)
 
    (where (block ℓ_some vdecls_some sts_some) bk_some)
 
    ;; check the some block with x in scope
    (where [vdecls ...] T)
    (where [vls ...] VL)
-   (where T_some [[(x ty_discr)] vdecls ...])
+   (where T_some [[(x ty_x)] vdecls ...])
    (where VL_some [[(x ℓ_some)] vls ...])
-   (bk-ok (srs fns) T_some Λ VL_some £ Δ_discr bk_some £_some Δ_some1)
-
-   ;; check that the some block drops x if necessary
-   (lv-dropped-if-necessary srs T_some Δ_some1 x)
-
-   ;; filter out x from the list of deinitialized paths
-   ;; since it is out of scope after match
-   (where Δ_some (expire-paths [x] Δ_some1))
+   (bk-ok (srs fns) T_some Λ VL_some £ Δ_discr bk_some £_some Δ_some)
 
    ;; check the none block without x in scope
    (bk-ok (srs fns) T Λ VL £ Δ_discr bk_none £_none Δ_none)
 
-   ;; loans from both sides are still in scope
-   (where £_match (∪ £_some £_none))
-
-   ;; anything dropped on either side must be considered dropped afterwards
-   (where Δ_match (∪ Δ_some Δ_none))
-
-   ;; check that anything dropped afterwards is dropped on *both* sides
-   (where [lv_match ...] Δ_match)
-   (lv-dropped-if-necessary srs T Δ_some lv_match) ...
-   (lv-dropped-if-necessary srs T Δ_none lv_match) ...
+   (join-after-match srs T x                 ;; initial state
+                     T_some £_some Δ_some    ;; state after some
+                     T £_none Δ_none         ;; state after none
+                     £_match Δ_match)        ;; outputs
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (match
                                  lv_discr
@@ -3926,9 +3970,36 @@
                                  (None => bk_none))
           £_match Δ_match)]
 
-  [(bk-ok prog T Λ VL £ Δ bk £ Δ_1)
+  [;; check that we can borrow the Option<T>
+   (rv-ok srs T Λ VL £ Δ (& ℓ mq lv_discr) ty_discr £_discr Δ_discr)
+   (where (& ℓ mq (Option ty_*x)) ty_discr)
+
+   (where (block ℓ_some vdecls_some sts_some) bk_some)
+
+   ;; check the some block with x in scope
+   (where [vdecls ...] T)
+   (where [vls ...] VL)
+   (where T_some [[(x (& ℓ mq ty_*x))] vdecls ...])
+   (where VL_some [[(x ℓ_some)] vls ...])
+   (bk-ok (srs fns) T_some Λ VL_some £_discr Δ_discr bk_some £_some Δ_some)
+
+   ;; check the none block without x in scope
+   (bk-ok (srs fns) T Λ VL £ Δ_discr bk_none £_none Δ_none)
+
+   (join-after-match srs T x                 ;; initial state
+                     T_some £_some Δ_some    ;; state after some
+                     T £_none Δ_none         ;; state after none
+                     £_match Δ_match)        ;; outputs
    --------------------------------------------------
-   (st-ok prog T Λ VL £ Δ bk £ Δ_1)]
+   (st-ok (srs fns) T Λ VL £ Δ (match
+                                 lv_discr
+                                 (Some (ref ℓ mq) x => bk_some)
+                                 (None => bk_none))
+          £_match Δ_match)]
+
+  [(bk-ok prog T Λ VL £ Δ bk £_1 Δ_1)
+   --------------------------------------------------
+   (st-ok prog T Λ VL £ Δ bk £_1 Δ_1)]
 
   )
 
@@ -3965,7 +4036,7 @@
  (term []))
 
 ;; test borrowing i
-(test-equal
+#;(test-equal
  (judgment-holds
   (st-ok (,test-srs []) ,test-ty-T ,test-ty-Λ ,test-ty-VL [] [r-mut-int]
          (r-mut-int = (& a mut i)) £ Δ)
@@ -4076,6 +4147,7 @@
    (where £_bk (expire-loans ℓ_b £_sts))
    --------------------------------------------------
    (bk-ok (srs fns) T Λ VL £ Δ bk £_bk Δ_bk)]
+
   )
 
 (test-equal
@@ -4125,14 +4197,61 @@
   (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
          (match opt-int
            (Some by-value x => (block l1
-                                      []
-                                      [(drop owned-B)]))
+                                      [(y int)]
+                                      [(y = x)
+                                       (drop owned-B)]))
            (None => (block l2
                            []
                            [(drop owned-B)])))
          £ Δ)
   (£ Δ))
  (term [([] [owned-B])]))
+
+;; test match with a by-ref check
+#;(test-equal
+ (judgment-holds
+  (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (match opt-int
+           (Some (ref b imm) x => (block l1
+                                      [(y int)]
+                                      [(y = (* x))]))
+           (None => (block l2
+                           []
+                           [])))
+         £ Δ)
+  (£ Δ))
+ (term [([(b imm opt-int)]
+         [])]))
+
+;; test match with a by-ref check and a type error
+#;(test-equal
+ (judgment-holds
+  (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (match opt-int
+           (Some (ref b imm) x => (block l1
+                                      [(y int)]
+                                      [(y = x)])) ;; should be (* x)
+           (None => (block l2
+                           []
+                           [])))
+         £ Δ)
+  (£ Δ))
+ (term []))
+
+;; test recursive match with a by-ref mut check
+#;(test-equal
+ (judgment-holds
+  (st-ok ,test-ty-prog ,test-ty-T ,test-ty-Λ ,test-ty-VL [] []
+         (match opt-int
+           (Some (ref b mut) x => (block l1
+                                         []
+                                         [(match opt-int
+                                            (Some (ref b mut) y => (block l2 [] []))
+                                            (None => (block l2 [] [])))]))
+           (None => (block l2 [] [])))
+         £ Δ)
+  (£ Δ))
+ (term []))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; fn-ok
@@ -4257,6 +4376,31 @@
 (test-equal
  (judgment-holds (fn-ok ,sum-prog
                         ,sum-main))
+ #t)
+
+(test-equal
+ (judgment-holds (fn-ok ,sum-prog
+                        (fun sum-list [a b] [(inp (& a imm (struct List [])))
+                                             (outp (& b mut int))]
+                             (block l0
+                                    [(r int)]
+                                    [(r = ((* inp) · 0))
+                                     (match ((* inp) · 1)
+                                       (Some (ref l0 imm) next1 =>
+                                             (block l1
+                                                    [(next2 (& l1 imm (struct List [])))
+                                                     (b int)]
+                                                    [(next2 = (& l1 imm (* (* next1))))
+                                                     (b = 0)
+                                                     (block l3
+                                                            [(c (& l3 mut int))]
+                                                            [(c = (& l3 mut b))
+                                                             (call sum-list [l1 l3] [next2 c])])
+                                                     ((* outp) := (r + b))]))
+                                       (None =>
+                                             (block l1
+                                                    []
+                                                    [((* outp) := r)])))]))))
  #t)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
