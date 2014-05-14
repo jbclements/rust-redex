@@ -840,6 +840,8 @@
 
 (test-equal (term (field-tys ,test-srs A ()))
             (term (int)))
+(test-equal (term (field-tys ,test-srs D (static)))
+            (term ((struct C (static)) (struct A ()) (struct C (static)) (struct B (static)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; is-DST
@@ -1061,7 +1063,7 @@
   field-offsets : srs s ℓs -> zs
   
   [(field-offsets srs s ℓs)
-   (0 z ...) ;; FIXME need a prefix sum!
+   (prefix-sum 0 (0 z ...))
    (where (ty_a ... ty_z) (field-tys srs s ℓs))
    (where (z ...) [(sizeof srs ty_a) ...])]
 
@@ -1069,6 +1071,8 @@
 
 (test-equal (term (field-offsets ,test-srs C (static)))
             (term (0 1)))
+(test-equal (term (field-offsets ,test-srs D (static)))
+            (term (0 3 4 7)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; vec-offsets -- determines the offsets of each element of a vector
