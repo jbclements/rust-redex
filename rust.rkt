@@ -424,7 +424,7 @@
   ∨ : boolean boolean -> boolean
 
   [(∨ #f #f) #f]
-  [(∨ boolean boolean) #t]
+  [(∨ _ _) #t]
   )
 
 (define-metafunction Patina-machine
@@ -824,6 +824,86 @@
 
 (test-equal (term (subst-ty [(a b) (b c)] (vec (& a mut int) erased)))
             (term (vec (& b mut int) erased)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-rv
+
+(define-metafunction Patina-machine
+  subst-rv : θ rv -> rv
+
+  [(subst-rv θ (& ℓ mq lv))
+   (& (subst-ℓ θ ℓ) mq lv)]
+
+  [(subst-rv θ (struct s (ℓ ...) (lv ...)))
+   (struct s ((subst-ℓ θ ℓ) ...) (lv ...))]
+
+  [(subst-rv θ (None ty))
+   (None (subst-ty θ ty))]
+
+  [(subst-rv θ (vec ty lv ...))
+   (vec (subst-ty θ ty) lv ...)]
+
+  [(subst-rv θ (pack lv ty))
+   (pack lv (subst-ty θ ty))]
+
+  [(subst-rv _ any) any])
+
+(test-equal (term (subst-rv ((a b) (b c)) (& a imm x)))
+            (term (& b imm x)))
+
+(test-equal (term (subst-rv ((a b) (b c)) (struct s (a b) (x y))))
+            (term (struct s (b c) (x y))))
+
+(test-equal (term (subst-rv ((a b) (b c)) (None (& a imm int))))
+            (term (None (& b imm int))))
+
+(test-equal (term (subst-rv ((a b) (b c)) (vec (& a imm int) x y z)))
+            (term (vec (& b imm int) x y z)))
+
+(test-equal (term (subst-rv ((a b) (b c)) (pack x (& a imm int))))
+            (term (pack x (& b imm int))))
+
+(test-equal (term (subst-rv ((a b) (b c)) (x + y)))
+            (term (x + y)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-st / subst-bk
+
+(define-metafunction Patina-machine
+  subst-st : θ st -> st
+
+  [(subst-st θ (lv = rv))
+   (lv = (subst-rv θ rv))]
+
+  [(subst-st θ (lv := rv))
+   (lv := (subst-rv θ rv))]
+
+  [(subst-st θ (call g (ℓ ...) lvs))
+   (call g ((subst-ℓ θ ℓ) ...) lvs)]
+  
+  [(subst-st θ (match lv (Some mode x => bk_1) (None => bk_2)))
+   (match lv (Some mode x => (subst-bk θ bk_1)) (None => (subst-bk θ bk_2)))]
+
+  [(subst-st θ bk)
+   (subst-bk θ bk)]
+
+  [(subst-st _ any) any])
+
+(define-metafunction Patina-machine
+  subst-bk : θ bk -> bk
+
+  ;; FIXME avoid capturing lifetime names
+  [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
+   ;(block (subst-ℓ θ ℓ) ((x (subst-ty θ ty)) ...) ((subst-st θ st) ...))])
+
+(test-equal (term (subst-st ((a b) (b c)) (x = (& a imm y))))
+            (term (x = (& b imm y))))
+
+(test-equal (term (subst-st ((a b) (b c)) (call g (b a) (x y z))))
+            (term (call g (c b) (x y z))))
+
+(test-equal (term (subst-st ((a b) (b c)) (block a ((x (& a imm int))) ((y = (vec (& a imm int) x))))))
+            (term (block b ((x (& b imm int))) ((y = (vec (& b imm int) x))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; field-tys
@@ -1931,7 +2011,9 @@
         (where (vmap_b vdecls_b H_1) (alloc-variables srs H vdecls_b))
         ;; create new stack frame for block
         ;; FIXME substitute a fresh lifetime for ℓ_b
-        (where sf_b (ℓ_b (st_b ...)))
+        (where ℓ_fresh ,(gensym "ℓ_block_")) ;; FIXME do we need to subst ℓ_fresh in vdecls_b?
+        (where sf_b (ℓ_fresh ((subst-st ((ℓ_b ℓ_fresh)) st_b) ...)))
+        ;(where sf_b (ℓ_b (st_b ...)))
         ]
 
    ;; Push a call.
