@@ -892,9 +892,50 @@
 (define-metafunction Patina-machine
   subst-bk : θ bk -> bk
 
-  ;; FIXME avoid capturing lifetime names
+  ;; cases
+  ; (¬ℓ ℓ) in θ => cannot substitute w/o capturing
+  ; (ℓ ℓ) in θ => ok. does not capture.
+  ; (ℓ ¬ℓ) in θ => rebound. replace with (ℓ ℓ)
+  ; (¬ℓ ¬ℓ) only in θ => ok. add (ℓ ℓ) to θ
+
+  ; if ℓ doesn't occur in θ, then map ℓ to ℓ
+  [(subst-bk θ_0 (block ℓ ((x ty) ...) (st ...)))
+   (block ℓ ((x (subst-ty θ_1 ty)) ...) ((subst-st θ_1 st) ...))
+   (where θ_1 (∪ θ_0 ((ℓ ℓ))))
+   ; ℓ is not a key in θ
+   (side-condition (term (¬ (has ℓ θ_0))))
+   ; ℓ is not a value in θ
+   (side-condition (term (∉ ℓ ,(map cadr (term θ_0)))))
+   ]
+  ; if ℓ occurs in θ only as a key, then it is now mapped to ℓ
+  [(subst-bk θ_0 (block ℓ ((x ty) ...) (st ...)))
+   (block ℓ ((x (subst-ty θ_1 ty)) ...) ((subst-st θ_1 st) ...))
+   ; replace the mapping from ℓ
+   (where θ_without-ℓ ,(filter (λ (kv) (not (eq? (car kv) (term ℓ)))) (term θ_0)))
+   (where θ_1 (∪ θ_without-ℓ ((ℓ ℓ))))
+   ; ℓ is not a key in θ
+   (side-condition (term (has ℓ θ_0)))
+   ; ℓ is not a value in θ
+   (side-condition (term (∉ ℓ ,(map cadr (term θ_0)))))
+   ]
+  ; if ℓ occurs as a value in θ, but the key is ℓ, then we're ok
   [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
-   ;(block (subst-ℓ θ ℓ) ((x (subst-ty θ ty)) ...) ((subst-st θ st) ...))])
+   (block ℓ ((x (subst-ty θ ty)) ...) ((subst-st θ st) ...))
+   (side-condition (term (∀ ,(map (λ (kv) 
+                                     (let ((eqℓ (map ((curry eq?) (term ℓ)) kv))) 
+                                       (term (∨ (∀ ,eqℓ) (¬ (∃ ,eqℓ))))))
+                                  (term θ)))))
+   ]
+  ; if ℓ occurs in θ as a value and the key is not ℓ, then we cannot substitute w/o capturing
+  ; FIXME, right now we just stop. We could also auto-α-convert.
+  ; That would make testing a bit hard since we wouldn't know the resulting lifetime.
+  ; But we really should somehow do the rest of the substitutions.
+  [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
+   (block ℓ ((x ty) ...) (st ...))
+   (side-condition (term (¬ (has ℓ θ))))
+   (side-condition (term (∈ ℓ ,(map cadr (term θ)))))
+   ]
+  )
 
 (test-equal (term (subst-st ((a b) (b c)) (x = (& a imm y))))
             (term (x = (& b imm y))))
@@ -902,8 +943,24 @@
 (test-equal (term (subst-st ((a b) (b c)) (call g (b a) (x y z))))
             (term (call g (c b) (x y z))))
 
-(test-equal (term (subst-st ((a b) (b c)) (block a ((x (& a imm int))) ((y = (vec (& a imm int) x))))))
-            (term (block b ((x (& b imm int))) ((y = (vec (& b imm int) x))))))
+(test-equal
+  (term (subst-st ((a b) (b c)) (block d ((x (& d imm int))) ((y = (vec (& a imm int) x))))))
+  (term (block d ((x (& d imm int))) ((y = (vec (& b imm int) x)))))
+  )
+(test-equal
+  (term (subst-st ((a a) (b c)) (block a ((x (& a imm int))) ((y = (vec (& b imm int) x))))))
+  (term (block a ((x (& a imm int))) ((y = (vec (& c imm int) x))))))
+; avoid capture
+(test-equal 
+  (term (subst-st ((a b) (b c)) 
+                  (block a ((x (& a imm int))) ((y = (vec (& b imm int) x)))))) 
+  (term           (block a ((x (& a imm int))) ((y = (vec (& c imm int) x))))))
+; FIXME we should be able to substitute b for a here, but right now
+; we just give up if we would capture c.
+(test-equal 
+  (term (subst-st ((a b) (b c)) 
+                  (block c ((x (& a imm int))) ((y = (vec (& a imm int) x)))))) 
+  (term           (block c ((x (& a imm int))) ((y = (vec (& a imm int) x))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; field-tys
