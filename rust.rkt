@@ -776,11 +776,13 @@
   subst-ℓ : θ ℓ -> ℓ
 
   [(subst-ℓ θ static) static]
-  [(subst-ℓ θ ℓ) (get ℓ θ)]
+  [(subst-ℓ θ ℓ) (get ℓ θ) (side-condition (term (has ℓ θ)))]
+  [(subst-ℓ θ ℓ) ℓ (side-condition (term (¬ (has ℓ θ))))]
   )
 
 (test-equal (term (subst-ℓ [] static)) (term static))
 (test-equal (term (subst-ℓ [(a b)] a)) (term b))
+(test-equal (term (subst-ℓ [(a b)] c)) (term c))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; subst-ty
