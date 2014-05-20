@@ -828,6 +828,17 @@
             (term (vec (& b mut int) erased)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-vdecl(s)
+
+(define-metafunction Patina-machine
+  subst-vdecl : θ vdecl -> vdecl
+  [(subst-vdecl θ (x ty)) (x (subst-ty θ ty))])
+
+(define-metafunction Patina-machine
+  subst-vdecls : θ vdecls -> vdecls
+  [(subst-vdecls θ (vdecl ...)) ((subst-vdecl θ vdecl) ...)])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; subst-rv
 
 (define-metafunction Patina-machine
@@ -869,7 +880,13 @@
             (term (x + y)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; subst-st / subst-bk
+;; subst-mode / subst-st / subst-bk
+
+(define-metafunction Patina-machine
+  subst-mode : θ mode -> mode
+
+  [(subst-mode θ by-value) by-value]
+  [(subst-mode θ (ref ℓ mq)) (ref (subst-ℓ θ ℓ) mq)])
 
 (define-metafunction Patina-machine
   subst-st : θ st -> st
@@ -884,7 +901,7 @@
    (call g ((subst-ℓ θ ℓ) ...) lvs)]
   
   [(subst-st θ (match lv (Some mode x => bk_1) (None => bk_2)))
-   (match lv (Some mode x => (subst-bk θ bk_1)) (None => (subst-bk θ bk_2)))]
+   (match lv (Some (subst-mode θ mode) x => (subst-bk θ bk_1)) (None => (subst-bk θ bk_2)))]
 
   [(subst-st θ bk)
    (subst-bk θ bk)]
@@ -898,16 +915,15 @@
   ; (¬ℓ ℓ) in θ => cannot substitute w/o capturing
   ; (ℓ ℓ) in θ => ok. does not capture.
   ; (ℓ ¬ℓ) in θ => rebound. replace with (ℓ ℓ)
-  ; (¬ℓ ¬ℓ) only in θ => ok. add (ℓ ℓ) to θ
+  ; (¬ℓ ¬ℓ) only in θ => ok. 
 
   ; if ℓ doesn't occur in θ, then map ℓ to ℓ
-  [(subst-bk θ_0 (block ℓ ((x ty) ...) (st ...)))
-   (block ℓ ((x (subst-ty θ_1 ty)) ...) ((subst-st θ_1 st) ...))
-   (where θ_1 (∪ θ_0 ((ℓ ℓ))))
+  [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
+   (block ℓ ((x (subst-ty θ ty)) ...) ((subst-st θ st) ...))
    ; ℓ is not a key in θ
-   (side-condition (term (¬ (has ℓ θ_0))))
+   (side-condition (term (¬ (has ℓ θ))))
    ; ℓ is not a value in θ
-   (side-condition (term (∉ ℓ ,(map cadr (term θ_0)))))
+   (side-condition (term (∉ ℓ ,(map cadr (term θ)))))
    ]
   ; if ℓ occurs in θ only as a key, then it is now mapped to ℓ
   [(subst-bk θ_0 (block ℓ ((x ty) ...) (st ...)))
@@ -952,6 +968,9 @@
 (test-equal
   (term (subst-st ((a a) (b c)) (block a ((x (& a imm int))) ((y = (vec (& b imm int) x))))))
   (term (block a ((x (& a imm int))) ((y = (vec (& c imm int) x))))))
+(test-equal
+  (term (subst-st ((a b)) (block c ((x (& d imm int))) ((y = (vec (& a imm int) x))))))
+  (term (block c ((x (& d imm int))) ((y = (vec (& b imm int) x))))))
 ; avoid capture
 (test-equal 
   (term (subst-st ((a b) (b c)) 
@@ -963,6 +982,15 @@
   (term (subst-st ((a b) (b c)) 
                   (block c ((x (& a imm int))) ((y = (vec (& a imm int) x)))))) 
   (term           (block c ((x (& a imm int))) ((y = (vec (& a imm int) x))))))
+
+(test-equal
+  (term (subst-st ((l1 ℓfresh))
+                  (block lll ((p (& l1 imm (struct List ()))))
+                              ((p = (& l1 imm (* l)))
+                               (call sum-list (l1 a) (p outp))))))
+  (term           (block lll ((p (& ℓfresh imm (struct List ()))))
+                              ((p = (& ℓfresh imm (* l)))
+                               (call sum-list (ℓfresh a) (p outp))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; field-tys
@@ -2059,23 +2087,27 @@
    ;; Push a new block.
    [--> ((srs fns) H (vmap ...) (vdecls ...)
          [sf_1 sf_2 ...])
-        ((srs fns) H_1  [vmap_b vmap ...] [vdecls_b vdecls ...]
+        ((srs fns) H_1  [vmap_b vmap ...] [vdecls_fresh vdecls ...]
          [sf_b (ℓ_1 [st_1 ...]) sf_2 ...])
 
         ;; unpack the top-most stack frame sf_1:
         (where (ℓ_1 [st_0 st_1 ...]) sf_1)
         ;; unpack the next statement st_0, which should be a block:
         (where (block ℓ_b vdecls_b [st_b ...]) st_0)
-        ;; allocate space for block svariables in memory:
-        (where (vmap_b vdecls_b H_1) (alloc-variables srs H vdecls_b))
-        ;; create new stack frame for block
-        ;; FIXME substitute a fresh lifetime for ℓ_b
+        ;; substitute a fresh lifetime for ℓ_b
         (where ℓ_fresh ,(gensym "ℓ_block_")) ;; FIXME do we need to subst ℓ_fresh in vdecls_b?
-        (where sf_b (ℓ_fresh ((subst-st ((ℓ_b ℓ_fresh)) st_b) ...)))
+        (where θ ((ℓ_b ℓ_fresh)))
+        (where vdecls_fresh (subst-vdecls θ vdecls_b))
+        (where (st_fresh ...) ((subst-st θ st_b) ...))
+        ;; allocate space for block svariables in memory:
+        (where (vmap_b vdecls_fresh H_1) (alloc-variables srs H vdecls_fresh))
+        ;; create new stack frame for block
+        (where sf_b (ℓ_fresh (st_fresh ...)))
         ;(where sf_b (ℓ_b (st_b ...)))
         ]
 
    ;; Push a call.
+   ; FIXME generate fresh lifetimes for function calls
    [--> ((srs fns) H V T S)
         ((srs fns) H_2 [vmap_a vmap ...] [vdecls_a vdecls ...]
          [(lX (bk_f)) (ℓ_1 [st_r ...]) sf_r ...])
@@ -2128,8 +2160,9 @@
                 [[(i int)]]
                 [(l1 [])])))
 
-;;;; test pushing a new block
-(test--> machine-step
+; FIXME we should really make a judgment for syntactic equivalence modulo renaming
+;;;; test pushing a new block (with lifetime naming fixed)
+(test-->>E #:steps 1 machine-step
          (term (,twentytwo-prog
                 [(0 (int 22))]
                 [[(a 0)]]
@@ -2139,12 +2172,35 @@
                               (c (~ int))]
                              [(i = 2)
                               (j = (new i))])])]))
-          (term (,twentytwo-prog
-                 [(2 void) (1 void) (0 (int 22))]
-                 [[(b 1) (c 2)] [(a 0)]]
-                 [[(b int) (c (~ int))] [(a int)]]
-                 [(l2 [(i = 2) (j = (new i))])
-                  (l1 [])])))
+         (λ (p) 
+            (redex-let Patina-machine
+              ([prog twentytwo-prog])
+              (redex-match? Patina-machine
+                    (prog
+                     [(2 void) (1 void) (0 (int 22))]
+                     [[(b 1) (c 2)] [(a 0)]]
+                     [[(b int) (c (~ int))] [(a int)]]
+                     [(ℓ_2 [(i = 2) (j = (new i))])
+                      (l1 [])])
+                    p))))
+
+;;;; test pushing a new block
+; (test--> machine-step
+;          (term (,twentytwo-prog
+;                 [(0 (int 22))]
+;                 [[(a 0)]]
+;                 [[(a int)]]
+;                 [(l1 [(block l2
+;                              [(b int)
+;                               (c (~ int))]
+;                              [(i = 2)
+;                               (j = (new i))])])]))
+;           (term (,twentytwo-prog
+;                  [(2 void) (1 void) (0 (int 22))]
+;                  [[(b 1) (c 2)] [(a 0)]]
+;                  [[(b int) (c (~ int))] [(a int)]]
+;                  [(l2 [(i = 2) (j = (new i))])
+;                   (l1 [])])))
 
 ;; test a series of state steps, starting from the initial state.
 ;; This tests:
@@ -2195,7 +2251,22 @@
 (check-not-false (redex-match Patina-machine C state-N))
 
 (test--> machine-step state-0 state-1)
-(test--> machine-step state-1 state-2)
+; FIXME we should really make a judgment for syntactic equivalence modulo renaming
+; state-1 --> state-2 with lifetime naming fixed
+(test-->>E #:steps 1 machine-step
+           state-1
+           (λ (p)
+              (redex-let Patina-machine
+                ([prog twentytwo-prog])
+                (redex-match? Patina-machine
+                  (prog
+                   [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
+                   [[] [(outp 2)] [(resultp 1)]]
+                   [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
+                   [(ℓ_0 [((* outp) = 22)])
+                    (lX [])
+                    (l0 [])])))))
+;(test--> machine-step state-1 state-2)
 (test--> machine-step state-2 state-3)
 (test-->> machine-step state-0 state-N)
 
