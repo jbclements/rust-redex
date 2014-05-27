@@ -911,47 +911,14 @@
 (define-metafunction Patina-machine
   subst-bk : θ bk -> bk
 
-  ;; cases
-  ; (¬ℓ ℓ) in θ => cannot substitute w/o capturing
-  ; (ℓ ℓ) in θ => ok. does not capture.
-  ; (ℓ ¬ℓ) in θ => rebound. replace with (ℓ ℓ)
-  ; (¬ℓ ¬ℓ) only in θ => ok. 
-
-  ; if ℓ doesn't occur in θ, then map ℓ to ℓ
-  [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
-   (block ℓ ((x (subst-ty θ ty)) ...) ((subst-st θ st) ...))
-   ; ℓ is not a key in θ
-   (side-condition (term (¬ (has ℓ θ))))
-   ; ℓ is not a value in θ
-   (side-condition (term (∉ ℓ ,(map cadr (term θ)))))
-   ]
-  ; if ℓ occurs in θ only as a key, then it is now mapped to ℓ
-  [(subst-bk θ_0 (block ℓ ((x ty) ...) (st ...)))
-   (block ℓ ((x (subst-ty θ_1 ty)) ...) ((subst-st θ_1 st) ...))
-   ; replace the mapping from ℓ
-   (where θ_without-ℓ ,(filter (λ (kv) (not (eq? (car kv) (term ℓ)))) (term θ_0)))
-   (where θ_1 (∪ θ_without-ℓ ((ℓ ℓ))))
-   ; ℓ is not a key in θ
-   (side-condition (term (has ℓ θ_0)))
-   ; ℓ is not a value in θ
-   (side-condition (term (∉ ℓ ,(map cadr (term θ_0)))))
-   ]
-  ; if ℓ occurs as a value in θ, but the key is ℓ, then we're ok
-  [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
-   (block ℓ ((x (subst-ty θ ty)) ...) ((subst-st θ st) ...))
-   (side-condition (term (∀ ,(map (λ (kv) 
-                                     (let ((eqℓ (map ((curry eq?) (term ℓ)) kv))) 
-                                       (term (∨ (∀ ,eqℓ) (¬ (∃ ,eqℓ))))))
-                                  (term θ)))))
-   ]
-  ; if ℓ occurs in θ as a value and the key is not ℓ, then we cannot substitute w/o capturing
-  ; FIXME, right now we just stop. We could also auto-α-convert.
-  ; That would make testing a bit hard since we wouldn't know the resulting lifetime.
-  ; But we really should somehow do the rest of the substitutions.
-  [(subst-bk θ (block ℓ ((x ty) ...) (st ...)))
-   (block ℓ ((x ty) ...) (st ...))
-   (side-condition (term (¬ (has ℓ θ))))
-   (side-condition (term (∈ ℓ ,(map cadr (term θ)))))
+  [(subst-bk θ_0 (block ℓ_0 ((x ty) ...) (st ...)))
+   (block ℓ_1 ((x (subst-ty θ_2 ty)) ...) ((subst-st θ_2 st) ...))
+   ; ℓ_0 is being rebound, so remove the now irrelevant old substutitions for ℓ_0
+   (where θ_1 (if-true θ_0 ,(map (λ (kv) (not (eq? (term ℓ_0) (car kv)))) (term θ_0))))
+   ; ℓ_1 is a capture-avoiding (deterministic) replacement for ℓ_0 (will be ℓ_0 if it's already fine)
+   (where ℓ_1 ,(variable-not-in (term θ_1) (term ℓ_0)))
+   ; add the substitution [ℓ_0 ↦ ℓ_1] to θ_1
+   (where θ_2 (∪ θ_1 ((ℓ_0 ℓ_1))))
    ]
   )
 
@@ -976,12 +943,11 @@
   (term (subst-st ((a b) (b c)) 
                   (block a ((x (& a imm int))) ((y = (vec (& b imm int) x)))))) 
   (term           (block a ((x (& a imm int))) ((y = (vec (& c imm int) x))))))
-; FIXME we should be able to substitute b for a here, but right now
-; we just give up if we would capture c.
+; a case where we actually need to use a different name
 (test-equal 
   (term (subst-st ((a b) (b c)) 
-                  (block c ((x (& a imm int))) ((y = (vec (& a imm int) x)))))) 
-  (term           (block c ((x (& a imm int))) ((y = (vec (& a imm int) x))))))
+                  (block c  ((x (& a imm int)) (y (& b imm int))) ((y = (vec (& c  imm int) x)))))) 
+  (term           (block c1 ((x (& b imm int)) (y (& c imm int))) ((y = (vec (& c1 imm int) x))))))
 
 (test-equal
   (term (subst-st ((l1 ℓfresh))
@@ -2006,6 +1972,11 @@
                    (~ int)
                    100)))
 
+;; deterministically generate a lifetime not currently in the stack with the provided prefix
+(define-metafunction Patina-machine
+  fresh-lifetime-not-on-stack : S ℓ -> ℓ
+  [(fresh-lifetime-not-on-stack S ℓ) ,(variable-not-in (map car (term S)) (term ℓ))])
+
 ;; --> -- machine step from one configuration C to the next
 
 (define machine-step
@@ -2088,36 +2059,36 @@
    [--> ((srs fns) H (vmap ...) (vdecls ...)
          [sf_1 sf_2 ...])
         ((srs fns) H_1  [vmap_b vmap ...] [vdecls_fresh vdecls ...]
-         [sf_b (ℓ_1 [st_1 ...]) sf_2 ...])
+         [sf_fresh (ℓ_1 [st_1 ...]) sf_2 ...])
 
         ;; unpack the top-most stack frame sf_1:
         (where (ℓ_1 [st_0 st_1 ...]) sf_1)
         ;; unpack the next statement st_0, which should be a block:
         (where (block ℓ_b vdecls_b [st_b ...]) st_0)
         ;; substitute a fresh lifetime for ℓ_b
-        (where ℓ_fresh ,(gensym "ℓ_block_")) ;; FIXME do we need to subst ℓ_fresh in vdecls_b?
+        ; pick a lifetime not in the list of lifetimes on the stack
+        (where ℓ_fresh (fresh-lifetime-not-on-stack [sf_1 sf_2 ...] ℓ_b))
+        ; substitute it for ℓ_b in everything
         (where θ ((ℓ_b ℓ_fresh)))
         (where vdecls_fresh (subst-vdecls θ vdecls_b))
         (where (st_fresh ...) ((subst-st θ st_b) ...))
         ;; allocate space for block svariables in memory:
         (where (vmap_b vdecls_fresh H_1) (alloc-variables srs H vdecls_fresh))
         ;; create new stack frame for block
-        (where sf_b (ℓ_fresh (st_fresh ...)))
-        ;(where sf_b (ℓ_b (st_b ...)))
+        (where sf_fresh (ℓ_fresh (st_fresh ...)))
         ]
 
    ;; Push a call.
-   ; FIXME generate fresh lifetimes for function calls
    [--> ((srs fns) H V T S)
         ((srs fns) H_2 [vmap_a vmap ...] [vdecls_a vdecls ...]
-         [(lX (bk_f)) (ℓ_1 [st_r ...]) sf_r ...])
+         [(ℓ_fresh (bk_a)) (ℓ_1 [st_r ...]) sf_r ...])
 
         ;; unpack V and T for later expansion
         (where ([vmap ...] [vdecls ...]) (V T))
         ;; unpack the stack frames:
         (where [(ℓ_1 sts_1) sf_r ...] S)
         ;; unpack the statements sts_1 from top-most activation:
-        (where ((call g ℓs_a lvs_a) st_r ...) sts_1)
+        (where ((call g (ℓ_a ...) lvs_a) st_r ...) sts_1)
         ;; determine the types of the actual args to be passed:
         (where tys_a ,(map (λ (lv) (term (lvtype srs T ,lv)))
                            (term lvs_a)))
@@ -2128,9 +2099,17 @@
         (where αs_a ,(map (λ (lv) (term (lvaddr srs H V T ,lv)))
                               (term lvs_a)))
         ;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
-        (where (fun g ℓs_f vdecls_f bk_f) (fun-defn fns g))
+        (where (fun g (ℓ_f ...) vdecls_f bk_f) (fun-defn fns g))
+        ; generate a fresh lifetime for the function call
+        (where ℓ_fresh (fresh-lifetime-not-on-stack S lX))
+        ; substitute the actual lifetimes for the formal lifetimes ...
+        (where θ ((ℓ_f ℓ_a) ...))
+        ; ... in the types of variables ...
+        (where vdecls_a (subst-vdecls θ vdecls_f))
+        ; ... and in the function body
+        (where bk_a (subst-bk θ bk_f))
         ;; allocate space for parameters in memory:
-        (where (vmap_a vdecls_a H_1) (alloc-variables srs H vdecls_f))
+        (where (vmap_a vdecls_a H_1) (alloc-variables srs H vdecls_a))
         ;; determine addresses for each formal argument:
         (where ((x_f ty_f) ...) vdecls_f)
         (where βs_f ,(map (λ (lv) (term (lvaddr srs H_1
@@ -2160,9 +2139,8 @@
                 [[(i int)]]
                 [(l1 [])])))
 
-; FIXME we should really make a judgment for syntactic equivalence modulo renaming
-;;;; test pushing a new block (with lifetime naming fixed)
-(test-->>E #:steps 1 machine-step
+;;;; test pushing a new block
+(test--> machine-step
          (term (,twentytwo-prog
                 [(0 (int 22))]
                 [[(a 0)]]
@@ -2172,35 +2150,12 @@
                               (c (~ int))]
                              [(i = 2)
                               (j = (new i))])])]))
-         (λ (p) 
-            (redex-let Patina-machine
-              ([prog twentytwo-prog])
-              (redex-match? Patina-machine
-                    (prog
-                     [(2 void) (1 void) (0 (int 22))]
-                     [[(b 1) (c 2)] [(a 0)]]
-                     [[(b int) (c (~ int))] [(a int)]]
-                     [(ℓ_2 [(i = 2) (j = (new i))])
-                      (l1 [])])
-                    p))))
-
-;;;; test pushing a new block
-; (test--> machine-step
-;          (term (,twentytwo-prog
-;                 [(0 (int 22))]
-;                 [[(a 0)]]
-;                 [[(a int)]]
-;                 [(l1 [(block l2
-;                              [(b int)
-;                               (c (~ int))]
-;                              [(i = 2)
-;                               (j = (new i))])])]))
-;           (term (,twentytwo-prog
-;                  [(2 void) (1 void) (0 (int 22))]
-;                  [[(b 1) (c 2)] [(a 0)]]
-;                  [[(b int) (c (~ int))] [(a int)]]
-;                  [(l2 [(i = 2) (j = (new i))])
-;                   (l1 [])])))
+          (term (,twentytwo-prog
+                 [(2 void) (1 void) (0 (int 22))]
+                 [[(b 1) (c 2)] [(a 0)]]
+                 [[(b int) (c (~ int))] [(a int)]]
+                 [(l2 [(i = 2) (j = (new i))])
+                  (l1 [])])))
 
 ;; test a series of state steps, starting from the initial state.
 ;; This tests:
@@ -2217,8 +2172,8 @@
   (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
          [[(outp 2)] [(resultp 1)]]
-         [[(outp (& a mut int))] [(resultp (& l0 mut int))]]
-         [(lX [(block l0 [] (((* outp) = 22)))])
+         [[(outp (& l0 mut int))] [(resultp (& l0 mut int))]]
+         [(lX [(block l1 [] (((* outp) = 22)))])
           (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-1))
 
@@ -2226,8 +2181,8 @@
   (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
          [[] [(outp 2)] [(resultp 1)]]
-         [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
-         [(l0 [((* outp) = 22)])
+         [[] [(outp (& l0 mut int))] [(resultp (& l0 mut int))]]
+         [(l1 [((* outp) = 22)])
           (lX [])
           (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-2))
@@ -2236,8 +2191,8 @@
   (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 22)) (1 (ptr 0))]
          [[] [(outp 2)] [(resultp 1)]]
-         [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
-         [(l0 [])
+         [[] [(outp (& l0 mut int))] [(resultp (& l0 mut int))]]
+         [(l1 [])
           (lX []) 
          (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-3))
@@ -2251,22 +2206,7 @@
 (check-not-false (redex-match Patina-machine C state-N))
 
 (test--> machine-step state-0 state-1)
-; FIXME we should really make a judgment for syntactic equivalence modulo renaming
-; state-1 --> state-2 with lifetime naming fixed
-(test-->>E #:steps 1 machine-step
-           state-1
-           (λ (p)
-              (redex-let Patina-machine
-                ([prog twentytwo-prog])
-                (redex-match? Patina-machine
-                  (prog
-                   [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
-                   [[] [(outp 2)] [(resultp 1)]]
-                   [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
-                   [(ℓ_0 [((* outp) = 22)])
-                    (lX [])
-                    (l0 [])])))))
-;(test--> machine-step state-1 state-2)
+(test--> machine-step state-1 state-2)
 (test--> machine-step state-2 state-3)
 (test-->> machine-step state-0 state-N)
 
