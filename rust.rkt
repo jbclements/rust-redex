@@ -432,18 +432,6 @@
   [(∧ _ _) #f])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; size
-
-(define-metafunction Patina-machine
-  size : [any ...] -> number
-
-  [(size [any ...]) ,(length (term [any ...]))]
-  )
-
-(test-equal (term (size [1 2 3])) (term 3))
-(test-equal (term (size [])) (term 0))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; if-true list bools -- like filter but takes a list of booleans
 
 (define-metafunction Patina-machine
@@ -461,25 +449,17 @@
 
 (define-metafunction Patina-machine
   ∀ : [any ...] -> boolean
-
-  [(∀ []) #t]
-  [(∀ [#f any ...]) #f]
-  [(∀ [#t any ...]) (∀ [any ...])]
-  )
+  [(∀ [_ ... #f _ ...]) #f]
+  [(∀ _) #t])
 
 (define-metafunction Patina-machine
   ∃ : [any ...] -> boolean
-
-  [(∃ []) #f]
-  [(∃ [#t any ...]) #t]
-  [(∃ [#f any ...]) (∃ [any ...])]
-  )
+  [(∃ [#f ...]) #f]
+  [(∃ _) #t])
 
 (define-metafunction Patina-machine
   ∄ : [any ...] -> boolean
-
-  [(∄ any) (¬ (∃ any))]
-  )
+  [(∄ any) (¬ (∃ any))])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ∪ -- a metafunction for set union
@@ -543,36 +523,24 @@
 
 (define-metafunction Patina-machine
   has : any [(any any) ...] -> any
-
-  [(has any_k0 [(any_k0 any_v0) (any_k1 any_v1) ...])
-   #t]
-
-  [(has any_k0 [])
-   #f]
-
-  [(has any_k0 [(any_k1 any_v1) (any_k2 any_v2) ...])
-   (has any_k0 [(any_k2 any_v2) ...])])
+  [(has any_k {_ ... [any_k _] _ ...}) #t]
+  [(has _ _) #f])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get -- a metafunction like assoc that works on lists like '((k v) (k1 v1))
 
 (define-metafunction Patina-machine
   get : any [(any any) ...] -> any
-
-  [(get any_k0 [(any_k0 any_v0) (any_k1 any_v1) ...])
-   any_v0]
-
-  [(get any_k0 [(any_k1 any_v1) (any_k2 any_v2) ...])
-   (get any_k0 [(any_k2 any_v2) ...])])
+  [(get any {_ ... [any any_v] _ ...}) any_v])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get* -- search through multiple assoc lists
 
 (define (get* key lists)
-  (let ([v (assoc key (car lists))])
-    (if (not v)
-        (get* key (cdr lists))
-        (cadr v))))
+  (for*/first ([l lists]
+               [p (in-value (assoc key l))]
+               #:when p)
+    (second p)))
 
 (test-equal (get* (term a) (term (((a 1) (b 2)) ((c 3)))))
             1)
@@ -615,12 +583,7 @@
 
 (define-metafunction Patina-machine
   sum : zs -> z
-  
-  [(sum []) 0]
-  [(sum [z_0 z_1 ...])
-   ,(+ (term z_0) (term (sum [z_1 ...])))]
-
-  )
+  [(sum any) ,(apply + (term any))])
 
 (test-equal (term (sum [1 2 3]))
             (term 6))
@@ -630,9 +593,7 @@
 
 (define-metafunction Patina-machine
   len : [any ...] -> number
-  
-  [(len [any ...])
-   ,(length (term [any ...]))])
+  [(len any) ,(length (term any))])
 
 (test-equal (term (len [1 2 3]))
             (term 3))
@@ -1840,7 +1801,7 @@
 
 (define machine-step
   (reduction-relation
-   Patina-machine
+   Patina-machine #:domain C
    
    ;; Stack frame with no more statements. Free variables.
    [--> ((srs fns) H [vmap_0 vmap_1 ...] [vdecls_0 vdecls_1 ...]
@@ -3737,7 +3698,7 @@
 
   ;; (vec ty lv ...)
   [;; check ty well-formed
-   (where l (size [lv ...]))
+   (where l (len [lv ...]))
    (use-lvs-ok srs T Λ £ Δ [lv ...] [ty_lv ...] Δ_1)
    (subtype Λ ty_lv ty) ...
    --------------------------------------------------
