@@ -2023,8 +2023,8 @@
         (where α_d (lvaddr srs H V T lv_d))
         ;; it is a None value:
         (where (int 0) (deref H α_d))
-        ;; generate a fresh lifetime: (FIXME)
-        (where ℓ_m lmatch)
+        ;; generate a fresh lifetime
+        (where ℓ_m (fresh-lifetime-not-on-stack [(ℓ [st ...]) sf ...] lmatch))
         ;; unpack V and T
         (where ([vmap ...] [vdecls ...]) (V T))
         ]
@@ -2042,8 +2042,8 @@
         (where (int 1) (deref H α_d))
         ;; make a pointer to the payload:
         (where α_v ,(add1 (term α_d)))
-        ;; generate a fresh lifetime: (FIXME)
-        (where ℓ_m lmatch)
+        ;; generate a fresh lifetime
+        (where ℓ_m (fresh-lifetime-not-on-stack [(ℓ [st ...]) sf ...] lmatch))
         ;; handle the ref/move into `x_m`:
         (where (H_m ty_m α_m) (unwrap srs H ℓ_m mode ty α_v))
         ;; create new entry for vmap/vdecls
@@ -2098,7 +2098,7 @@
         ;; determine where lvalues are found in memory
         (where αs_a ,(map (λ (lv) (term (lvaddr srs H V T ,lv)))
                               (term lvs_a)))
-        ;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
+        ;; lookup the fun def'n
         (where (fun g (ℓ_f ...) vdecls_f bk_f) (fun-defn fns g))
         ; generate a fresh lifetime for the function call
         (where ℓ_fresh (fresh-lifetime-not-on-stack S lX))
