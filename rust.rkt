@@ -417,22 +417,19 @@
   ¬ : boolean -> boolean
 
   [(¬ #t) #f]
-  [(¬ #f) #t]
-  )
+  [(¬ #f) #t])
 
 (define-metafunction Patina-machine
   ∨ : boolean boolean -> boolean
 
   [(∨ #f #f) #f]
-  [(∨ boolean boolean) #t]
-  )
+  [(∨ _ _) #t])
 
 (define-metafunction Patina-machine
   ∧ : boolean boolean -> boolean
 
   [(∧ #t #t) #t]
-  [(∧ boolean boolean) #f]
-  )
+  [(∧ _ _) #f])
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; size
