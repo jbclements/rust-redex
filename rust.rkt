@@ -450,7 +450,7 @@
   if-true : [any ...] [boolean ...] -> [any ...]
 
   [(if-true any_0 any_1)
-   ,(map car (filter cadr (map list (term any_0) (term any_1))))])
+   ,(for/list ([x (term any_0)] [t (term any_1)] #:when t) x)])
 
 (test-equal (term (if-true [1 2 3 4 5] [#f #t #f #t #f]))
             (term [2 4]))
