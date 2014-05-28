@@ -3734,12 +3734,12 @@
    (rv-ok srs T Λ VL £ Δ (Some lv) (Option ty) £ Δ_1)]
 
   ;; (None ty)
-  [;; check ty well-formed
+  [;; FIXME: check ty well-formed
    --------------------------------------------------
    (rv-ok srs T Λ VL £ Δ (None ty) (Option ty) £ Δ)]
 
   ;; (vec ty lv ...)
-  [;; check ty well-formed
+  [;; FIXME: check ty well-formed
    (where l (size [lv ...]))
    (use-lvs-ok srs T Λ £ Δ [lv ...] [ty_lv ...] Δ_1)
    (subtype Λ ty_lv ty) ...
