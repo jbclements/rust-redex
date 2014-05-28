@@ -3912,7 +3912,7 @@
    --------------------------------------------------
    (st-ok (srs fns) T Λ VL £ Δ (drop lv) £ Δ_1)]
 
-  [;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
+  [;; lookup the fun def'n
    (where (fun g [ℓ_f ...] [(x_f ty_f) ...] bk_f) (fun-defn fns g))
    ;; subst from formal lifetime to actual lifetimes
    (where θ [(ℓ_f ℓ_a) ...])
