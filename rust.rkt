@@ -424,7 +424,7 @@
   ∨ : boolean boolean -> boolean
 
   [(∨ #f #f) #f]
-  [(∨ boolean boolean) #t]
+  [(∨ _ _) #t]
   )
 
 (define-metafunction Patina-machine
@@ -776,11 +776,13 @@
   subst-ℓ : θ ℓ -> ℓ
 
   [(subst-ℓ θ static) static]
-  [(subst-ℓ θ ℓ) (get ℓ θ)]
+  [(subst-ℓ θ ℓ) (get ℓ θ) (side-condition (term (has ℓ θ)))]
+  [(subst-ℓ θ ℓ) ℓ (side-condition (term (¬ (has ℓ θ))))]
   )
 
 (test-equal (term (subst-ℓ [] static)) (term static))
 (test-equal (term (subst-ℓ [(a b)] a)) (term b))
+(test-equal (term (subst-ℓ [(a b)] c)) (term c))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; subst-ty
@@ -824,6 +826,137 @@
 
 (test-equal (term (subst-ty [(a b) (b c)] (vec (& a mut int) erased)))
             (term (vec (& b mut int) erased)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-vdecl(s)
+
+(define-metafunction Patina-machine
+  subst-vdecl : θ vdecl -> vdecl
+  [(subst-vdecl θ (x ty)) (x (subst-ty θ ty))])
+
+(define-metafunction Patina-machine
+  subst-vdecls : θ vdecls -> vdecls
+  [(subst-vdecls θ (vdecl ...)) ((subst-vdecl θ vdecl) ...)])
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-rv
+
+(define-metafunction Patina-machine
+  subst-rv : θ rv -> rv
+
+  [(subst-rv θ (& ℓ mq lv))
+   (& (subst-ℓ θ ℓ) mq lv)]
+
+  [(subst-rv θ (struct s (ℓ ...) (lv ...)))
+   (struct s ((subst-ℓ θ ℓ) ...) (lv ...))]
+
+  [(subst-rv θ (None ty))
+   (None (subst-ty θ ty))]
+
+  [(subst-rv θ (vec ty lv ...))
+   (vec (subst-ty θ ty) lv ...)]
+
+  [(subst-rv θ (pack lv ty))
+   (pack lv (subst-ty θ ty))]
+
+  [(subst-rv _ any) any])
+
+(test-equal (term (subst-rv ((a b) (b c)) (& a imm x)))
+            (term (& b imm x)))
+
+(test-equal (term (subst-rv ((a b) (b c)) (struct s (a b) (x y))))
+            (term (struct s (b c) (x y))))
+
+(test-equal (term (subst-rv ((a b) (b c)) (None (& a imm int))))
+            (term (None (& b imm int))))
+
+(test-equal (term (subst-rv ((a b) (b c)) (vec (& a imm int) x y z)))
+            (term (vec (& b imm int) x y z)))
+
+(test-equal (term (subst-rv ((a b) (b c)) (pack x (& a imm int))))
+            (term (pack x (& b imm int))))
+
+(test-equal (term (subst-rv ((a b) (b c)) (x + y)))
+            (term (x + y)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; subst-mode / subst-st / subst-bk
+
+(define-metafunction Patina-machine
+  subst-mode : θ mode -> mode
+
+  [(subst-mode θ by-value) by-value]
+  [(subst-mode θ (ref ℓ mq)) (ref (subst-ℓ θ ℓ) mq)])
+
+(define-metafunction Patina-machine
+  subst-st : θ st -> st
+
+  [(subst-st θ (lv = rv))
+   (lv = (subst-rv θ rv))]
+
+  [(subst-st θ (lv := rv))
+   (lv := (subst-rv θ rv))]
+
+  [(subst-st θ (call g (ℓ ...) lvs))
+   (call g ((subst-ℓ θ ℓ) ...) lvs)]
+  
+  [(subst-st θ (match lv (Some mode x => bk_1) (None => bk_2)))
+   (match lv (Some (subst-mode θ mode) x => (subst-bk θ bk_1)) (None => (subst-bk θ bk_2)))]
+
+  [(subst-st θ bk)
+   (subst-bk θ bk)]
+
+  [(subst-st _ any) any])
+
+(define-metafunction Patina-machine
+  subst-bk : θ bk -> bk
+
+  [(subst-bk θ_0 (block ℓ_0 ((x ty) ...) (st ...)))
+   (block ℓ_1 ((x (subst-ty θ_2 ty)) ...) ((subst-st θ_2 st) ...))
+   ; ℓ_0 is being rebound, so remove the now irrelevant old substutitions for ℓ_0
+   (where θ_1 (if-true θ_0 ,(map (λ (kv) (not (eq? (term ℓ_0) (car kv)))) (term θ_0))))
+   ; ℓ_1 is a capture-avoiding (deterministic) replacement for ℓ_0 (will be ℓ_0 if it's already fine)
+   (where ℓ_1 ,(variable-not-in (term θ_1) (term ℓ_0)))
+   ; add the substitution [ℓ_0 ↦ ℓ_1] to θ_1
+   (where θ_2 (∪ θ_1 ((ℓ_0 ℓ_1))))
+   ]
+  )
+
+(test-equal (term (subst-st ((a b) (b c)) (x = (& a imm y))))
+            (term (x = (& b imm y))))
+
+(test-equal (term (subst-st ((a b) (b c)) (call g (b a) (x y z))))
+            (term (call g (c b) (x y z))))
+
+(test-equal
+  (term (subst-st ((a b) (b c)) (block d ((x (& d imm int))) ((y = (vec (& a imm int) x))))))
+  (term (block d ((x (& d imm int))) ((y = (vec (& b imm int) x)))))
+  )
+(test-equal
+  (term (subst-st ((a a) (b c)) (block a ((x (& a imm int))) ((y = (vec (& b imm int) x))))))
+  (term (block a ((x (& a imm int))) ((y = (vec (& c imm int) x))))))
+(test-equal
+  (term (subst-st ((a b)) (block c ((x (& d imm int))) ((y = (vec (& a imm int) x))))))
+  (term (block c ((x (& d imm int))) ((y = (vec (& b imm int) x))))))
+; avoid capture
+(test-equal 
+  (term (subst-st ((a b) (b c)) 
+                  (block a ((x (& a imm int))) ((y = (vec (& b imm int) x)))))) 
+  (term           (block a ((x (& a imm int))) ((y = (vec (& c imm int) x))))))
+; a case where we actually need to use a different name
+(test-equal 
+  (term (subst-st ((a b) (b c)) 
+                  (block c  ((x (& a imm int)) (y (& b imm int))) ((y = (vec (& c  imm int) x)))))) 
+  (term           (block c1 ((x (& b imm int)) (y (& c imm int))) ((y = (vec (& c1 imm int) x))))))
+
+(test-equal
+  (term (subst-st ((l1 ℓfresh))
+                  (block lll ((p (& l1 imm (struct List ()))))
+                              ((p = (& l1 imm (* l)))
+                               (call sum-list (l1 a) (p outp))))))
+  (term           (block lll ((p (& ℓfresh imm (struct List ()))))
+                              ((p = (& ℓfresh imm (* l)))
+                               (call sum-list (ℓfresh a) (p outp))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; field-tys
@@ -1839,6 +1972,11 @@
                    (~ int)
                    100)))
 
+;; deterministically generate a lifetime not currently in the stack with the provided prefix
+(define-metafunction Patina-machine
+  fresh-lifetime-not-on-stack : S ℓ -> ℓ
+  [(fresh-lifetime-not-on-stack S ℓ) ,(variable-not-in (map car (term S)) (term ℓ))])
+
 ;; --> -- machine step from one configuration C to the next
 
 (define machine-step
@@ -1885,8 +2023,8 @@
         (where α_d (lvaddr srs H V T lv_d))
         ;; it is a None value:
         (where (int 0) (deref H α_d))
-        ;; generate a fresh lifetime: (FIXME)
-        (where ℓ_m lmatch)
+        ;; generate a fresh lifetime
+        (where ℓ_m (fresh-lifetime-not-on-stack [(ℓ [st ...]) sf ...] lmatch))
         ;; unpack V and T
         (where ([vmap ...] [vdecls ...]) (V T))
         ]
@@ -1904,8 +2042,8 @@
         (where (int 1) (deref H α_d))
         ;; make a pointer to the payload:
         (where α_v ,(add1 (term α_d)))
-        ;; generate a fresh lifetime: (FIXME)
-        (where ℓ_m lmatch)
+        ;; generate a fresh lifetime
+        (where ℓ_m (fresh-lifetime-not-on-stack [(ℓ [st ...]) sf ...] lmatch))
         ;; handle the ref/move into `x_m`:
         (where (H_m ty_m α_m) (unwrap srs H ℓ_m mode ty α_v))
         ;; create new entry for vmap/vdecls
@@ -1920,31 +2058,37 @@
    ;; Push a new block.
    [--> ((srs fns) H (vmap ...) (vdecls ...)
          [sf_1 sf_2 ...])
-        ((srs fns) H_1  [vmap_b vmap ...] [vdecls_b vdecls ...]
-         [sf_b (ℓ_1 [st_1 ...]) sf_2 ...])
+        ((srs fns) H_1  [vmap_b vmap ...] [vdecls_fresh vdecls ...]
+         [sf_fresh (ℓ_1 [st_1 ...]) sf_2 ...])
 
         ;; unpack the top-most stack frame sf_1:
         (where (ℓ_1 [st_0 st_1 ...]) sf_1)
         ;; unpack the next statement st_0, which should be a block:
         (where (block ℓ_b vdecls_b [st_b ...]) st_0)
+        ;; substitute a fresh lifetime for ℓ_b
+        ; pick a lifetime not in the list of lifetimes on the stack
+        (where ℓ_fresh (fresh-lifetime-not-on-stack [sf_1 sf_2 ...] ℓ_b))
+        ; substitute it for ℓ_b in everything
+        (where θ ((ℓ_b ℓ_fresh)))
+        (where vdecls_fresh (subst-vdecls θ vdecls_b))
+        (where (st_fresh ...) ((subst-st θ st_b) ...))
         ;; allocate space for block svariables in memory:
-        (where (vmap_b vdecls_b H_1) (alloc-variables srs H vdecls_b))
+        (where (vmap_b vdecls_fresh H_1) (alloc-variables srs H vdecls_fresh))
         ;; create new stack frame for block
-        ;; FIXME substitute a fresh lifetime for ℓ_b
-        (where sf_b (ℓ_b (st_b ...)))
+        (where sf_fresh (ℓ_fresh (st_fresh ...)))
         ]
 
    ;; Push a call.
    [--> ((srs fns) H V T S)
         ((srs fns) H_2 [vmap_a vmap ...] [vdecls_a vdecls ...]
-         [(lX (bk_f)) (ℓ_1 [st_r ...]) sf_r ...])
+         [(ℓ_fresh (bk_a)) (ℓ_1 [st_r ...]) sf_r ...])
 
         ;; unpack V and T for later expansion
         (where ([vmap ...] [vdecls ...]) (V T))
         ;; unpack the stack frames:
         (where [(ℓ_1 sts_1) sf_r ...] S)
         ;; unpack the statements sts_1 from top-most activation:
-        (where ((call g ℓs_a lvs_a) st_r ...) sts_1)
+        (where ((call g (ℓ_a ...) lvs_a) st_r ...) sts_1)
         ;; determine the types of the actual args to be passed:
         (where tys_a ,(map (λ (lv) (term (lvtype srs T ,lv)))
                            (term lvs_a)))
@@ -1954,10 +2098,18 @@
         ;; determine where lvalues are found in memory
         (where αs_a ,(map (λ (lv) (term (lvaddr srs H V T ,lv)))
                               (term lvs_a)))
-        ;; lookup the fun def'n (FIXME s/ℓs_f/ℓs_a/):
-        (where (fun g ℓs_f vdecls_f bk_f) (fun-defn fns g))
+        ;; lookup the fun def'n
+        (where (fun g (ℓ_f ...) vdecls_f bk_f) (fun-defn fns g))
+        ; generate a fresh lifetime for the function call
+        (where ℓ_fresh (fresh-lifetime-not-on-stack S lX))
+        ; substitute the actual lifetimes for the formal lifetimes ...
+        (where θ ((ℓ_f ℓ_a) ...))
+        ; ... in the types of variables ...
+        (where vdecls_a (subst-vdecls θ vdecls_f))
+        ; ... and in the function body
+        (where bk_a (subst-bk θ bk_f))
         ;; allocate space for parameters in memory:
-        (where (vmap_a vdecls_a H_1) (alloc-variables srs H vdecls_f))
+        (where (vmap_a vdecls_a H_1) (alloc-variables srs H vdecls_a))
         ;; determine addresses for each formal argument:
         (where ((x_f ty_f) ...) vdecls_f)
         (where βs_f ,(map (λ (lv) (term (lvaddr srs H_1
@@ -2020,8 +2172,8 @@
   (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
          [[(outp 2)] [(resultp 1)]]
-         [[(outp (& a mut int))] [(resultp (& l0 mut int))]]
-         [(lX [(block l0 [] (((* outp) = 22)))])
+         [[(outp (& l0 mut int))] [(resultp (& l0 mut int))]]
+         [(lX [(block l1 [] (((* outp) = 22)))])
           (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-1))
 
@@ -2029,8 +2181,8 @@
   (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 0)) (1 (ptr 0))]
          [[] [(outp 2)] [(resultp 1)]]
-         [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
-         [(l0 [((* outp) = 22)])
+         [[] [(outp (& l0 mut int))] [(resultp (& l0 mut int))]]
+         [(l1 [((* outp) = 22)])
           (lX [])
           (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-2))
@@ -2039,8 +2191,8 @@
   (term (,twentytwo-prog
          [(2 (ptr 0)) (0 (int 22)) (1 (ptr 0))]
          [[] [(outp 2)] [(resultp 1)]]
-         [[] [(outp (& a mut int))] [(resultp (& l0 mut int))]]
-         [(l0 [])
+         [[] [(outp (& l0 mut int))] [(resultp (& l0 mut int))]]
+         [(l1 [])
           (lX []) 
          (l0 [])])))
 (check-not-false (redex-match Patina-machine C state-3))
