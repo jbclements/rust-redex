@@ -2882,18 +2882,43 @@
 ;;
 ;; If this judgement holds, then the type `ty` is bound by the
 ;; lifetime ℓ.
-;;
-;; FIXME
 
 (define-judgment-form
   Patina-typing
   #:mode     (ty-bound-by-lifetime I I I )
   #:contract (ty-bound-by-lifetime Λ ℓ ty)
 
-  [--------------------------------------------------
-   (ty-bound-by-lifetime Λ ℓ ty)]
+  [------------------------------
+   (ty-bound-by-lifetime Λ ℓ int)]
 
+  [(ty-bound-by-lifetime Λ ℓ ty)
+   --------------------------------------
+   (ty-bound-by-lifetime Λ ℓ (Option ty))]
+
+  [(ty-bound-by-lifetime Λ ℓ ty)
+   ----------------------------------------
+   (ty-bound-by-lifetime Λ ℓ (vec ty olen))]
+
+  [(ty-bound-by-lifetime Λ ℓ ty)
+   ---------------------------------
+   (ty-bound-by-lifetime Λ ℓ (~ ty))]
+
+  [(lifetime-≤ Λ ℓ_0 ℓ_1) ; ℓ_1 cannot be shorter than ℓ_0
+   (ty-bound-by-lifetime Λ ℓ_0 ty)
+   ------------------------------------------
+   (ty-bound-by-lifetime Λ ℓ_0 (& ℓ_1 mq ty))]
+
+  [(lifetime-≤ Λ ℓ_0 ℓ_1) ... ; ℓ_1s cannot be shorter than ℓ_0
+   ; all the fields in s are bounded by the lifetime parameters
+   ; thus, if the lifetimes all outlive ℓ_0, then so too do the fields
+   -------------------------------------------------
+   (ty-bound-by-lifetime Λ ℓ_0 (struct s (ℓ_1 ...)))]
   )
+
+(test-equal #t (judgment-holds (ty-bound-by-lifetime ((l0 ()) (l1 (l0))) l1 (& l1 imm int))))
+(test-equal #t (judgment-holds (ty-bound-by-lifetime ((l0 ()) (l1 (l0))) l1 (& l0 imm int))))
+(test-equal #f (judgment-holds (ty-bound-by-lifetime ((l0 ()) (l1 (l0))) l0 (& l1 imm int))))
+(test-equal #t (judgment-holds (ty-bound-by-lifetime ((l0 ()) (l1 (l0))) l0 (& l0 imm int))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; unencumbered £ lv
